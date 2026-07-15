@@ -1,0 +1,18 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.7.0,<3.0.0
+web3>=7.2.0
+numpy>=1.26.0
+pandas>=2.2.0
+scikit-learn>=1.4.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# AI / LLM (OpenAI-compatible endpoint, e.g. https://api.aiand.com/v1)
+openai>=1.54.0
+
+# Portfolio optimization (SLSQP)
+scipy>=1.11.0
+
+# Structured logging
+loguru>=0.7.0

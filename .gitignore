@@ -1,0 +1,18 @@
+# environment and local Python runtime
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+htmlcov/
+
+# editor and OS files
+.DS_Store
+.idea/
+.vscode/

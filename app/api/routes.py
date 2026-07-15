@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import math
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
+from loguru import logger
+from pydantic import BaseModel, Field
+
+from app.modules.agent_core import ExecutionIntentService, get_mom3_agent
+from app.modules.agent_core.execution import ExecutionIntentError
+from app.modules.portfolio_intelligence import PortfolioIntelligenceService
+from app.services.aave_reader import AaveReader
+from app.services.position_reader import PositionReader
+
+
+router = APIRouter()
+agent = get_mom3_agent()
+execution_intents = ExecutionIntentService()
+aave_reader = AaveReader()
+position_reader = PositionReader()
+portfolio_intelligence = PortfolioIntelligenceService(position_reader=position_reader)
+
+
+class StrategyRequest(BaseModel):
+    risk_tolerance: Literal["conservative", "moderate", "aggressive"] = "moderate"
+    chain_id: int | None = None
+    user_address: str | None = None
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2_000)
+    history: list[dict] | None = None
+    chain_id: int | None = None
+    user_address: str | None = None
+
+
+class ExecutionIntentRequest(BaseModel):
+    market_id: str = Field(min_length=1, max_length=160)
+    action: Literal["supply", "withdraw"] = "supply"
+    amount: str = Field(min_length=1, max_length=48)
+    user_address: str
+
+
+class PortfolioAssetInput(BaseModel):
+    id: str = Field(default="", max_length=240)
+    symbol: str = Field(default="UNKNOWN", max_length=48)
+    name: str = Field(default="Unknown token", max_length=160)
+    balance: float = 0
+    amount_in_usd: float = 0
+    chain: str = Field(default="Unknown chain", max_length=80)
+    chain_id: int = 0
+    token_address: str = Field(default="", max_length=80)
+
+
+class PortfolioAnalysisRequest(BaseModel):
+    user_address: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
+    wallet_assets: list[PortfolioAssetInput] = Field(default_factory=list, max_length=500)
+
+
+def json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if hasattr(value, "item"):
+        return json_safe(value.item())
+    return value
+
+
+@router.get("/health", tags=["system"])
+def health():
+    return {
+        "ok": True,
+        "service": "mom3 Agentkit",
+        "version": "3.0.0",
+        "mvp_chains": [42161, 8453],
+        "execution_protocols": ["aave-v3", "compound-v3", "morpho-blue"],
+        "execution_asset": "USDC",
+        "llm_available": agent.llm.available,
+        "llm_model": agent.llm.model,
+    }
+
+
+@router.get("/api/yield-markets", tags=["markets"])
+def yield_markets(
+    chain_id: int | None = None,
+    execution_only: bool = Query(default=False),
+):
+    try:
+        return JSONResponse(content=json_safe(agent.markets(chain_id, execution_only)))
+    except Exception as exc:
+        logger.error(f"Yield markets failed: {exc}")
+        raise HTTPException(status_code=502, detail="Live yield markets are unavailable.") from exc
+
+
+@router.get("/api/yield-markets/{market_id}/chart", tags=["markets"])
+def yield_market_chart(market_id: str):
+    try:
+        market = agent.catalog.get_market(market_id)
+        if not market:
+            raise HTTPException(status_code=404, detail="Live yield market was not found.")
+        points = agent.collector.fetch_pool_chart(market["pool_id"])
+        return JSONResponse(content=json_safe({
+            "timestamp": agent.now_iso(),
+            "market_id": market_id,
+            "pool_id": market["pool_id"],
+            "source": "defillama-live",
+            "points": points,
+        }))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Yield market chart failed: {exc}")
+        raise HTTPException(status_code=502, detail="Live yield chart is unavailable.") from exc
+
+
+@router.get("/api/yield-markets/{market_id}/position", tags=["markets"])
+def yield_market_position(market_id: str, user_address: str):
+    try:
+        market = agent.catalog.get_market(market_id)
+        if not market:
+            raise HTTPException(status_code=404, detail="Live yield market was not found.")
+        return JSONResponse(content=json_safe(position_reader.read(market, user_address)))
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Yield position read failed: {exc}")
+        raise HTTPException(status_code=502, detail="The on-chain position is unavailable.") from exc
+
+
+@router.get("/api/market/aave", tags=["markets"])
+def aave_market(chain_id: int = 42161):
+    try:
+        return aave_reader.read_market(chain_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Aave market read failed: {exc}")
+        raise HTTPException(status_code=502, detail="Aave market is unavailable.") from exc
+
+
+@router.post("/api/ai/strategy", tags=["agent"])
+def strategy(request: StrategyRequest):
+    try:
+        return JSONResponse(
+            content=json_safe(agent.strategy(request.risk_tolerance, request.chain_id))
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Strategy build failed: {exc}")
+        raise HTTPException(status_code=502, detail="Unable to build the live strategy.") from exc
+
+
+@router.post("/api/portfolio/analyze", tags=["portfolio"])
+def analyze_portfolio(request: PortfolioAnalysisRequest):
+    try:
+        return JSONResponse(
+            content=json_safe(
+                portfolio_intelligence.analyze(
+                    request.user_address,
+                    [asset.model_dump() for asset in request.wallet_assets],
+                )
+            )
+        )
+    except Exception as exc:
+        logger.error(f"Portfolio analysis failed: {exc}")
+        raise HTTPException(status_code=502, detail="Portfolio intelligence is temporarily unavailable.") from exc
+
+
+@router.post("/api/ai/execution-intent", tags=["agent"])
+def execution_intent(request: ExecutionIntentRequest):
+    try:
+        return execution_intents.create_intent(
+            request.market_id, request.action, request.amount, request.user_address
+        )
+    except ExecutionIntentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Execution intent failed: {exc}")
+        raise HTTPException(status_code=502, detail="Unable to prepare the execution intent.") from exc
+
+
+@router.get("/api/yield-forecast", tags=["agent"])
+def yield_forecast(chain_id: int | None = None):
+    try:
+        return JSONResponse(content=json_safe(agent.forecasts(chain_id)))
+    except Exception as exc:
+        logger.error(f"Yield forecast failed: {exc}")
+        raise HTTPException(status_code=502, detail="Yield forecast is unavailable.") from exc
+
+
+@router.get("/api/liquidity-pulse", tags=["agent"])
+def liquidity_pulse(chain_id: int | None = None):
+    try:
+        return JSONResponse(content=json_safe(agent.liquidity_pulse(chain_id)))
+    except Exception as exc:
+        logger.error(f"Liquidity pulse failed: {exc}")
+        raise HTTPException(status_code=502, detail="Liquidity pulse is unavailable.") from exc
+
+
+@router.post("/api/chat", tags=["agent"])
+async def chat(request: ChatRequest):
+    try:
+        return await agent.chat(request.message, request.history, request.chain_id)
+    except Exception as exc:
+        logger.error(f"Chat failed: {exc}")
+        raise HTTPException(status_code=502, detail="Chat is unavailable.") from exc
+
+
+@router.get("/api/network-info", tags=["system"])
+def network_info(chain_id: int | None = None):
+    return {
+        "chain_id": chain_id,
+        "chain": agent.collector.chain_name(chain_id) if chain_id else None,
+        "mvp_supported": chain_id in {42161, 8453} if chain_id else False,
+        "aave_supported": chain_id in AaveReader.MARKETS if chain_id else False,
+        "llm_available": agent.llm.available,
+    }
