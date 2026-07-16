@@ -7,6 +7,7 @@ pandas>=2.2.0
 scikit-learn>=1.4.0
 python-dotenv>=1.0.0
 requests>=2.31.0
+pymongo>=4.8.0
 
 # AI / LLM (OpenAI-compatible endpoint, e.g. https://api.aiand.com/v1)
 openai>=1.54.0

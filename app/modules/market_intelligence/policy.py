@@ -23,6 +23,20 @@ class ExecutionMarket:
 # Only exact DefiLlama pools that have been matched to official protocol
 # deployments are executable. Everything else remains discovery-only.
 EXECUTION_MARKETS: dict[str, ExecutionMarket] = {
+    # Kamino Lend Main Market USDC reserve on Solana. The pool id is the
+    # live DefiLlama pool id; the reserve is the official Kamino reserve.
+    "d2141a59-c199-4be7-8d4b-c8223954836b": ExecutionMarket(
+        market_id="d2141a59-c199-4be7-8d4b-c8223954836b",
+        chain_id=101,
+        chain="Solana",
+        project="kamino-lend",
+        symbol="USDC",
+        contract="7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+        asset_address="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        asset_decimals=6,
+        execution_type="kamino-lend",
+        position_symbol="kUSDC",
+    ),
     # Aave V3 native USDC reserves.
     "d9fa8e14-0447-4207-9ae8-7810199dfa1f": ExecutionMarket(
         market_id="d9fa8e14-0447-4207-9ae8-7810199dfa1f",

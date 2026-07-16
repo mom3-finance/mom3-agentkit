@@ -10,6 +10,7 @@ from app.modules.market_intelligence import MarketCatalog, get_market_catalog
 
 
 ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
+SOLANA_ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 ExecutionAction = Literal["supply", "withdraw"]
 
 
@@ -32,15 +33,15 @@ class ExecutionIntentService:
     ) -> dict:
         if action not in {"supply", "withdraw"}:
             raise ExecutionIntentError("Action must be supply or withdraw.")
-        if not ADDRESS_PATTERN.fullmatch(user_address or ""):
-            raise ExecutionIntentError("A valid EVM Universal Account address is required.")
-
         market = self.catalog.get_market(market_id)
         if not market:
             raise ExecutionIntentError("The selected market is not in the live MVP catalog.")
         execution = market.get("execution") or {}
         if not execution.get("enabled") or action not in (execution.get("actions") or []):
             raise ExecutionIntentError("This market is discovery-only and cannot be executed yet.")
+        is_solana = int(market["chain_id"]) == 101
+        if not (SOLANA_ADDRESS_PATTERN.fullmatch(user_address or "") if is_solana else ADDRESS_PATTERN.fullmatch(user_address or "")):
+            raise ExecutionIntentError("A valid Solana wallet address is required." if is_solana else "A valid EVM Universal Account address is required.")
 
         value = self._amount(amount)
         decimals = int(execution["asset_decimals"])
@@ -73,7 +74,7 @@ class ExecutionIntentService:
             },
             "position_symbol": execution.get("position_symbol") or market["asset"],
             "receiver": user_address,
-            "calls": self._calls(
+            "calls": [] if is_solana else self._calls(
                 execution_type,
                 action,
                 asset_address,
@@ -83,7 +84,7 @@ class ExecutionIntentService:
             ),
             "policy": {
                 "execution_mode": "user-confirmed",
-                "requires_eip7702": True,
+                "requires_eip7702": not is_solana,
                 "cross_chain_funding_supported": action == "supply",
                 "max_amount_usd": settings.maximum_intent_amount_usd,
                 "slippage_bps": 100,

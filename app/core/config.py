@@ -21,6 +21,8 @@ class Settings:
     maximum_apy: float
     maximum_intent_amount_usd: float
     use_llm_strategy_reasoning: bool
+    enable_chart_history: bool
+    mongo_required: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -32,6 +34,8 @@ class Settings:
             maximum_apy=float(os.getenv("MVP_MAX_APY", "20")),
             maximum_intent_amount_usd=float(os.getenv("MVP_MAX_INTENT_AMOUNT_USD", "10000")),
             use_llm_strategy_reasoning=_boolean(os.getenv("AGENT_LLM_STRATEGY_REASONING", "false")),
+            enable_chart_history=_boolean(os.getenv("AGENTKIT_ENABLE_CHART_HISTORY", "false")),
+            mongo_required=_boolean(os.getenv("AGENTKIT_MONGO_REQUIRED", "true")),
         )
 
 

@@ -3,15 +3,13 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from app.core.config import settings
 from app.services.defi_llama import DefiLlamaCollector, get_defillama_collector
+from app.services.pool_snapshot_store import PoolSnapshotStore
 
 from .policy import (
-    DISCOVERY_PROJECTS,
     PROTOCOL_BASE_RISK,
     PROTOCOL_LABELS,
     execution_market_for,
-    is_stablecoin_symbol,
 )
 
 
@@ -24,23 +22,44 @@ def _number(value) -> float:
 
 
 class MarketCatalog:
-    """Curates live DefiLlama pools into a safe, executable MVP catalog."""
+    """Builds a live catalog from all DefiLlama pools on supported chains."""
 
-    def __init__(self, collector: Optional[DefiLlamaCollector] = None) -> None:
+    def __init__(self, collector: Optional[DefiLlamaCollector] = None, store: Optional[PoolSnapshotStore] = None) -> None:
         self.collector = collector or get_defillama_collector()
+        # Strategy data is intentionally live, like Nuvia. The store argument
+        # remains injectable for compatibility with older callers, but is not
+        # used as a source of market data.
+        self.store = store
 
     def list_markets(
         self,
         chain_id: int | None = None,
         *,
         execution_only: bool = False,
+        protocol: str | None = None,
     ) -> list[dict]:
-        chains = [chain_id] if chain_id is not None else sorted({42161, 8453})
+        supported_chain_ids = getattr(self.collector, "supported_chain_ids", lambda: [42161, 8453])
+        chains = [chain_id] if chain_id is not None else supported_chain_ids()
         markets: list[dict] = []
         seen: set[str] = set()
 
+        # DefiLlamaCollector provides the five-minute in-memory cache and
+        # single-flight request protection. MongoDB is not part of strategy.
+        if hasattr(self.collector, "fetch_all_pools"):
+            pools = self.collector.fetch_all_pools()
+        else:
+            # Compatibility for lightweight collectors used by integrations/tests.
+            pools = [pool for cid in chains for pool in self.collector.fetch_chain_yields(cid)]
+
         for cid in chains:
-            for pool in self.collector.fetch_chain_yields(cid):
+            chain_name = self.collector.chain_name(cid)
+            if hasattr(self.collector, "_chain_matches"):
+                chain_pools = [p for p in pools if self.collector._chain_matches(str(p.get("chain") or ""), chain_name or "")]
+            else:
+                chain_pools = self.collector.fetch_chain_yields(cid)
+            for pool in chain_pools:
+                if protocol and str(pool.get("project") or "").lower() != protocol.lower():
+                    continue
                 market = self._normalize(pool, cid)
                 if not market or market["market_id"] in seen:
                     continue
@@ -67,15 +86,7 @@ class MarketCatalog:
         tvl = _number(pool.get("tvlUsd"))
         apy = _number(pool.get("apy"))
 
-        if project not in DISCOVERY_PROJECTS:
-            return None
-        if not bool(pool.get("stablecoin")) or not is_stablecoin_symbol(symbol):
-            return None
-        if str(pool.get("exposure") or "single").lower() != "single":
-            return None
-        if str(pool.get("ilRisk") or "no").lower() not in {"no", "false"}:
-            return None
-        if tvl < settings.minimum_tvl_usd or apy <= 0 or apy > settings.maximum_apy:
+        if not project or not symbol or not pool.get("pool"):
             return None
 
         market_id = str(pool.get("pool") or f"{project}:{chain_id}:{symbol}")
@@ -92,12 +103,13 @@ class MarketCatalog:
         return {
             "market_id": market_id,
             "pool_id": str(pool.get("pool") or ""),
-            "protocol": PROTOCOL_LABELS.get(project, project),
+            "protocol": PROTOCOL_LABELS.get(project, project.replace("-", " ").title()),
             "project": project,
             "symbol": symbol,
-            "asset": "USDC" if "USDC" in symbol else "USDT",
+            "asset": symbol.split("-")[0].split("/")[0].strip() or symbol,
             "chain": self.collector.chain_name(chain_id) or str(chain_id),
             "chain_id": chain_id,
+            "ua_supported": chain_id in self.collector.supported_chain_ids(),
             "apy": round(apy, 4),
             "apy_base": round(_number(pool.get("apyBase")), 4),
             "apy_reward": round(reward_apy, 4),
@@ -105,9 +117,9 @@ class MarketCatalog:
             "apy_change_7d": round(_number(pool.get("apyPct7D")), 4),
             "apy_change_30d": round(_number(pool.get("apyPct30D")), 4),
             "tvl": round(tvl, 2),
-            "stablecoin": True,
-            "exposure": "single",
-            "impermanent_loss": False,
+            "stablecoin": bool(pool.get("stablecoin", False)),
+            "exposure": str(pool.get("exposure") or "unknown"),
+            "impermanent_loss": bool(pool.get("ilRisk", False)),
             "risk_score": risk_score,
             "opportunity_score": opportunity_score,
             "prediction": {
