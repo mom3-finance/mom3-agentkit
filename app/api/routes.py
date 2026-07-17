@@ -264,10 +264,12 @@ async def chat(request: ChatRequest):
 
 @router.get("/api/network-info", tags=["system"])
 def network_info(chain_id: int | None = None):
+    supported_chains = agent.collector.supported_chain_ids()
     return {
         "chain_id": chain_id,
         "chain": agent.collector.chain_name(chain_id) if chain_id else None,
-        "mvp_supported": chain_id in {42161, 8453} if chain_id else False,
+        "supported_chains": supported_chains,
+        "mvp_supported": chain_id in supported_chains if chain_id else False,
         "aave_supported": chain_id in AaveReader.MARKETS if chain_id else False,
         "llm_available": agent.llm.available,
     }
