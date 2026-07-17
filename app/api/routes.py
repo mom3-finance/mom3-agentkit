@@ -136,7 +136,13 @@ def yield_market_detail(market_id: str):
             # Detail consumers need the chart together with the market. The
             # collector caches this per pool, so this avoids a second browser
             # request and repeated chart fetches during realtime refreshes.
-            "chart": agent.collector.fetch_pool_chart(market["pool_id"]) if settings.enable_chart_history else [],
+            "chart": (
+                agent.catalog.get_history(market["pool_id"])
+                if settings.enable_chart_history and settings.market_history_url
+                else agent.collector.fetch_pool_chart(market["pool_id"])
+                if settings.enable_chart_history
+                else []
+            ),
         }))
     except HTTPException:
         raise
@@ -151,12 +157,13 @@ def yield_market_chart(market_id: str):
         market = agent.catalog.get_market(market_id)
         if not market:
             raise HTTPException(status_code=404, detail="Live yield market was not found.")
-        points = agent.collector.fetch_pool_chart(market["pool_id"])
+        using_postgres = bool(settings.market_history_url)
+        points = agent.catalog.get_history(market["pool_id"]) if using_postgres else agent.collector.fetch_pool_chart(market["pool_id"])
         return JSONResponse(content=json_safe({
             "timestamp": agent.now_iso(),
             "market_id": market_id,
             "pool_id": market["pool_id"],
-            "source": "defillama-live",
+            "source": "postgresql-market-snapshots" if using_postgres else "defillama-live",
             "points": points,
         }))
     except HTTPException:

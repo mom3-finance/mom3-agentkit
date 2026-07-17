@@ -114,6 +114,16 @@ class MarketCatalog:
     def get_market(self, market_id: str) -> dict | None:
         return next((market for market in self.list_markets() if market["market_id"] == market_id), None)
 
+    def get_history(self, market_id: str, range_name: str = "30d") -> list[dict]:
+        """Read chart history from the backend snapshot API when configured."""
+        if not settings.market_history_url:
+            return []
+        url = f"{settings.market_history_url.rstrip('/')}/{market_id}/history"
+        response = requests.get(url, params={"range": range_name}, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("points", []) if isinstance(payload, dict) else []
+
     def _normalize(self, pool: dict, chain_id: int) -> dict | None:
         project = str(pool.get("project") or "").lower()
         symbol = str(pool.get("symbol") or "").upper()

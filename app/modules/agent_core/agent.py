@@ -365,7 +365,12 @@ class Mom3Agent:
                 "weather": "sunny" if trend == "rising" else "rainy" if trend == "declining" else "stable",
                 "confidence": round(max(confidence, probability / 100) if probability else confidence, 2),
                 "slope": round(slope, 4),
-                "data_source": "defillama-chart" if len(apy_values) >= 2 else "defillama-pools-snapshot",
+                "data_source": (
+                    "postgresql-market-snapshots" if settings.market_data_url and len(apy_values) >= 2
+                    else "postgresql-market-current" if settings.market_data_url
+                    else "defillama-chart" if len(apy_values) >= 2
+                    else "defillama-pools-snapshot"
+                ),
             }
             output.append({
                 **forecast,
@@ -394,7 +399,11 @@ class Mom3Agent:
                 "net_flow": round(market["tvl"] * tvl_change_24h / 100, 2),
                 "is_anomaly": False,
                 "alert": None,
-                "signal_basis": "DefiLlama TVL history and market depth",
+                "signal_basis": (
+                    "PostgreSQL market snapshots and market depth"
+                    if settings.market_data_url
+                    else "DefiLlama TVL history and market depth"
+                ),
                 "timestamp": self.now_iso(),
                 "market_id": market["market_id"],
                 "chain": market["chain"],
@@ -403,20 +412,25 @@ class Mom3Agent:
         return output
 
     def _pool_history(self, market: dict) -> list[dict]:
-        """Fetch one cached DefiLlama chart only for a selected market."""
+        """Fetch one persisted PostgreSQL chart, with DefiLlama fallback."""
         if not settings.enable_chart_history:
             return []
         pool_id = str(market.get("pool_id") or "")
         if not pool_id:
             return []
-        points = self.collector.fetch_pool_chart(pool_id)
+        points = self.catalog.get_history(pool_id) if settings.market_history_url else self.collector.fetch_pool_chart(pool_id)
         normalized = []
         for point in points:
             try:
                 apy = float(point.get("apy")) if point.get("apy") is not None else None
-                tvl = float(point.get("tvlUsd")) if point.get("tvlUsd") is not None else None
+                tvl_value = point.get("tvlUsd", point.get("tvl"))
+                tvl = float(tvl_value) if tvl_value is not None else None
                 if apy is not None or tvl is not None:
-                    normalized.append({"apy": apy, "tvl": tvl, "timestamp": point.get("timestamp")})
+                    normalized.append({
+                        "apy": apy,
+                        "tvl": tvl,
+                        "timestamp": point.get("timestamp", point.get("capturedAt")),
+                    })
             except (TypeError, ValueError):
                 continue
         return normalized

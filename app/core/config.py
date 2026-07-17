@@ -24,6 +24,7 @@ class Settings:
     enable_chart_history: bool
     mongo_required: bool
     market_data_url: str
+    market_history_url: str
     market_data_required: bool
 
     @classmethod
@@ -39,6 +40,7 @@ class Settings:
             enable_chart_history=_boolean(os.getenv("AGENTKIT_ENABLE_CHART_HISTORY", "false")),
             mongo_required=_boolean(os.getenv("AGENTKIT_MONGO_REQUIRED", "true")),
             market_data_url=os.getenv("MARKET_DATA_URL", "").strip(),
+            market_history_url=os.getenv("MARKET_HISTORY_URL", os.getenv("MARKET_DATA_URL", "")).strip(),
             market_data_required=_boolean(os.getenv("MARKET_DATA_REQUIRED", "false")),
         )
 
