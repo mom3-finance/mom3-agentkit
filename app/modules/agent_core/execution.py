@@ -35,7 +35,7 @@ class ExecutionIntentService:
             raise ExecutionIntentError("Action must be supply or withdraw.")
         market = self.catalog.get_market(market_id)
         if not market:
-            raise ExecutionIntentError("The selected market is not in the live MVP catalog.")
+            raise ExecutionIntentError("The selected market is no longer available in the live market catalog.")
         execution = market.get("execution") or {}
         if not execution.get("enabled") or action not in (execution.get("actions") or []):
             raise ExecutionIntentError("This market is discovery-only and cannot be executed yet.")
@@ -102,7 +102,7 @@ class ExecutionIntentService:
             raise ExecutionIntentError("Amount must be greater than zero.")
         if value > Decimal(str(settings.maximum_intent_amount_usd)):
             raise ExecutionIntentError(
-                f"MVP execution is limited to {settings.maximum_intent_amount_usd:g} USDC per intent."
+                f"Execution is limited to {settings.maximum_intent_amount_usd:g} USDC per intent."
             )
         return value
 

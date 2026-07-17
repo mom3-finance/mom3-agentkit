@@ -40,7 +40,7 @@ class Mom3Agent:
         return {
             "timestamp": self.now_iso(),
             "chain_id": chain_id,
-            "mvp_scope": {
+            "supported_scope": {
                 "chains": supported_chains,
                 "execution_protocols": execution_protocols,
                 "execution_assets": sorted({
@@ -185,7 +185,7 @@ class Mom3Agent:
         home_chain: int | None,
     ) -> list[dict]:
         # Strategy recommendations must be actionable by the user. Discovery
-        # markets remain available to Explore, but non-allowlisted pools must
+        # markets remain available to Explore, but pools without a verified adapter must
         # never be recommended as executable strategy opportunities.
         eligible = [
             market for market in markets
@@ -465,7 +465,7 @@ class Mom3Agent:
         )
         reply = self.llm.chat(
             [
-                {"role": "system", "content": "Write a concise 2-3 sentence summary of this non-custodial cross-chain USDC lending strategy. Follow the supplied allocations exactly and mention the leading market, APY, TVL, and why the allocation fits the risk profile. Do not claim guaranteed returns. Do not use the words MVP, production ready, or production-ready."},
+                {"role": "system", "content": "Write a concise 2-3 sentence summary of this non-custodial cross-chain USDC lending strategy. Follow the supplied allocations exactly and mention the leading market, APY, TVL, and why the allocation fits the risk profile. Do not claim guaranteed returns or readiness guarantees."},
                 {"role": "user", "content": f"Risk profile: {tolerance}; home chain: {home_chain}; allocation summary: {allocation_summary}.\n{rows}"},
             ],
             temperature=0.4,
@@ -475,7 +475,7 @@ class Mom3Agent:
             return fallback
         # Keep user-facing strategy copy consistent even if the model ignores a wording constraint.
         cleaned = reply.replace("production-ready", "deployment-ready").replace("production ready", "deployment-ready")
-        cleaned = cleaned.replace("MVP", "strategy").replace("mvp", "strategy")
+        cleaned = cleaned.replace("production ready", "available").replace("production-ready", "available")
         return cleaned
 
     @staticmethod

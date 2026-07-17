@@ -78,7 +78,7 @@ def health():
         "ok": True,
         "service": "mom3 Agentkit",
         "version": "3.0.0",
-        "mvp_chains": [42161, 8453],
+        "supported_chains": agent.collector.supported_chain_ids(),
         "execution_protocols": ["aave-v3", "compound-v3", "morpho-blue"],
         "execution_asset": "USDC",
         "llm_available": agent.llm.available,
@@ -276,7 +276,7 @@ def network_info(chain_id: int | None = None):
         "chain_id": chain_id,
         "chain": agent.collector.chain_name(chain_id) if chain_id else None,
         "supported_chains": supported_chains,
-        "mvp_supported": chain_id in supported_chains if chain_id else False,
+        "supported": chain_id in supported_chains if chain_id else False,
         "aave_supported": chain_id in AaveReader.MARKETS if chain_id else False,
         "llm_available": agent.llm.available,
     }
