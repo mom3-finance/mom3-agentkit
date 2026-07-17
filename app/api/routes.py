@@ -91,9 +91,18 @@ def yield_markets(
     chain_id: int | None = None,
     execution_only: bool = Query(default=False),
     protocol: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     try:
-        return JSONResponse(content=json_safe(agent.markets(chain_id, execution_only, protocol=protocol)))
+        payload = agent.markets(chain_id, execution_only, protocol=protocol)
+        rows = payload.get("markets", [])
+        payload["total"] = len(rows)
+        payload["offset"] = offset
+        payload["limit"] = limit
+        payload["has_more"] = limit is not None and offset + limit < len(rows)
+        payload["markets"] = rows[offset: offset + limit if limit is not None else None]
+        return JSONResponse(content=json_safe(payload))
     except Exception as exc:
         logger.error(f"Yield markets failed: {exc}")
         raise HTTPException(status_code=502, detail="Live yield markets are unavailable.") from exc
