@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import requests
 from typing import Optional
 
+from app.core.config import settings
 from app.services.defi_llama import DefiLlamaCollector, get_defillama_collector
 from app.services.pool_snapshot_store import PoolSnapshotStore
 
@@ -43,9 +45,21 @@ class MarketCatalog:
         markets: list[dict] = []
         seen: set[str] = set()
 
-        # DefiLlamaCollector provides the five-minute in-memory cache and
-        # single-flight request protection. MongoDB is not part of strategy.
-        if hasattr(self.collector, "fetch_all_pools"):
+        if settings.market_data_url:
+            try:
+                params = {"limit": "100", "page": "1"}
+                if chain_id is not None: params["chain_id"] = str(chain_id)
+                if protocol: params["protocol"] = protocol
+                if execution_only: params["execution_only"] = "true"
+                response = requests.get(settings.market_data_url, params=params, timeout=10)
+                response.raise_for_status()
+                pools = response.json().get("markets", [])
+                pools = [self._backend_row_to_pool(pool) for pool in pools]
+            except Exception as exc:
+                if settings.market_data_required:
+                    raise RuntimeError(f"PostgreSQL market API is unavailable: {exc}") from exc
+                pools = self.collector.fetch_all_pools()
+        elif hasattr(self.collector, "fetch_all_pools"):
             pools = self.collector.fetch_all_pools()
         else:
             # Compatibility for lightweight collectors used by integrations/tests.
@@ -76,6 +90,20 @@ class MarketCatalog:
             )
         )
         return markets
+
+    @staticmethod
+    def _backend_row_to_pool(row: dict) -> dict:
+        return {
+            **row,
+            "pool": row.get("pool_id") or row.get("market_id"),
+            "tvlUsd": row.get("tvl_usd", row.get("tvl")),
+            "apyBase": row.get("apy_base"),
+            "apyReward": row.get("apy_reward"),
+            "apyPct1D": row.get("apy_change_1d"),
+            "apyPct7D": row.get("apy_change_7d"),
+            "apyPct30D": row.get("apy_change_30d"),
+            "ilRisk": "yes" if row.get("impermanent_loss") else "no",
+        }
 
     def get_market(self, market_id: str) -> dict | None:
         return next((market for market in self.list_markets() if market["market_id"] == market_id), None)
@@ -137,8 +165,8 @@ class MarketCatalog:
                 "asset_decimals": execution.asset_decimals if execution else None,
                 "position_symbol": execution.position_symbol if execution else None,
             },
-            "source": "defillama-live",
-            "source_url": "https://yields.llama.fi/pools",
+            "source": "postgresql" if settings.market_data_url else "defillama-live",
+            "source_url": settings.market_data_url or "https://yields.llama.fi/pools",
         }
 
 

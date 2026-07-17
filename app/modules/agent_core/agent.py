@@ -54,7 +54,10 @@ class Mom3Agent:
         }
 
     def strategy(self, risk_tolerance: RiskTolerance, home_chain: int | None = None) -> dict:
-        markets = self.catalog.list_markets()
+        # Strategy only needs actionable candidates. Asking the PostgreSQL
+        # catalog for executable rows avoids loading the first discovery page
+        # and then accidentally filtering out all UA-compatible pools locally.
+        markets = self.catalog.list_markets(execution_only=True)
         if not markets:
             raise RuntimeError("No live UA-compatible market passed the current policy.")
 
@@ -132,7 +135,11 @@ class Mom3Agent:
                 (item["execution"] for item in opportunities if item["execution"]["enabled"]),
                 opportunities[0]["execution"],
             ),
-            "live_data_source": "DefiLlama live pools + mom3 smart strategy scoring + Particle UA execution policy",
+            "live_data_source": (
+                "PostgreSQL market snapshots + mom3 smart strategy scoring + Particle UA execution policy"
+                if settings.market_data_url
+                else "DefiLlama live pools + mom3 smart strategy scoring + Particle UA execution policy"
+            ),
             "last_updated": self.now_iso(),
         }
 
