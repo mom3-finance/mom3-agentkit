@@ -55,13 +55,18 @@ Framework entrypoints call business modules; business modules use data/algorithm
 
 ## Run
 
+Use Python 3.12 for local development. The current FastAPI and Pydantic stack in this repo is not ready for Python 3.14 yet, and running it there can fail with `ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'`.
+
 ```powershell
 cd mom3-agentkit
-python -m venv .venv
+Remove-Item -Recurse -Force .venv
+python3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8001
 ```
+
+If `python3.12` is not available on your machine yet, install Python 3.12 first and then recreate `.venv` with that interpreter before installing dependencies.
 
 Configure the Next.js app:
 

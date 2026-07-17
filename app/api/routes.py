@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.modules.agent_core import ExecutionIntentService, get_mom3_agent
 from app.modules.agent_core.execution import ExecutionIntentError
 from app.modules.portfolio_intelligence import PortfolioIntelligenceService
+from app.core.config import settings
 from app.services.aave_reader import AaveReader
 from app.services.position_reader import PositionReader
 
@@ -77,7 +78,7 @@ def health():
         "ok": True,
         "service": "mom3 Agentkit",
         "version": "3.0.0",
-        "mvp_chains": [42161, 8453],
+        "supported_chains": agent.collector.supported_chain_ids(),
         "execution_protocols": ["aave-v3", "compound-v3", "morpho-blue"],
         "execution_asset": "USDC",
         "llm_available": agent.llm.available,
@@ -89,12 +90,65 @@ def health():
 def yield_markets(
     chain_id: int | None = None,
     execution_only: bool = Query(default=False),
+    protocol: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     try:
-        return JSONResponse(content=json_safe(agent.markets(chain_id, execution_only)))
+        payload = agent.markets(chain_id, execution_only, protocol=protocol)
+        rows = payload.get("markets", [])
+        payload["total"] = len(rows)
+        payload["offset"] = offset
+        payload["limit"] = limit
+        payload["has_more"] = limit is not None and offset + limit < len(rows)
+        payload["markets"] = rows[offset: offset + limit if limit is not None else None]
+        return JSONResponse(content=json_safe(payload))
     except Exception as exc:
         logger.error(f"Yield markets failed: {exc}")
         raise HTTPException(status_code=502, detail="Live yield markets are unavailable.") from exc
+
+
+@router.get("/api/yield-markets/{market_id}", tags=["markets"])
+def yield_market_detail(market_id: str):
+    try:
+        market = agent.catalog.get_market(market_id)
+        # Backend realtime may have a local Aave fallback ID when AgentKit is
+        # temporarily unreachable. Resolve it to the canonical live market
+        # once AgentKit is back online.
+        if not market and market_id.startswith("fallback-aave-"):
+            try:
+                fallback_chain = int(market_id.rsplit("-", 1)[-1])
+                market = next(
+                    (
+                        item for item in agent.catalog.list_markets(fallback_chain)
+                        if item.get("project") == "aave-v3"
+                        and str(item.get("symbol", "")).upper() == "USDC"
+                    ),
+                    None,
+                )
+            except ValueError:
+                market = None
+        if not market:
+            raise HTTPException(status_code=404, detail="Live yield market was not found.")
+        return JSONResponse(content=json_safe({
+            "timestamp": agent.now_iso(),
+            "market": market,
+            # Detail consumers need the chart together with the market. The
+            # collector caches this per pool, so this avoids a second browser
+            # request and repeated chart fetches during realtime refreshes.
+            "chart": (
+                agent.catalog.get_history(market["pool_id"])
+                if settings.enable_chart_history and settings.market_history_url
+                else agent.collector.fetch_pool_chart(market["pool_id"])
+                if settings.enable_chart_history
+                else []
+            ),
+        }))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Yield market detail failed: {exc}")
+        raise HTTPException(status_code=502, detail="Live yield market is unavailable.") from exc
 
 
 @router.get("/api/yield-markets/{market_id}/chart", tags=["markets"])
@@ -103,12 +157,13 @@ def yield_market_chart(market_id: str):
         market = agent.catalog.get_market(market_id)
         if not market:
             raise HTTPException(status_code=404, detail="Live yield market was not found.")
-        points = agent.collector.fetch_pool_chart(market["pool_id"])
+        using_postgres = bool(settings.market_history_url)
+        points = agent.catalog.get_history(market["pool_id"]) if using_postgres else agent.collector.fetch_pool_chart(market["pool_id"])
         return JSONResponse(content=json_safe({
             "timestamp": agent.now_iso(),
             "market_id": market_id,
             "pool_id": market["pool_id"],
-            "source": "defillama-live",
+            "source": "postgresql-market-snapshots" if using_postgres else "defillama-live",
             "points": points,
         }))
     except HTTPException:
@@ -216,10 +271,12 @@ async def chat(request: ChatRequest):
 
 @router.get("/api/network-info", tags=["system"])
 def network_info(chain_id: int | None = None):
+    supported_chains = agent.collector.supported_chain_ids()
     return {
         "chain_id": chain_id,
         "chain": agent.collector.chain_name(chain_id) if chain_id else None,
-        "mvp_supported": chain_id in {42161, 8453} if chain_id else False,
+        "supported_chains": supported_chains,
+        "supported": chain_id in supported_chains if chain_id else False,
         "aave_supported": chain_id in AaveReader.MARKETS if chain_id else False,
         "llm_available": agent.llm.available,
     }

@@ -12,15 +12,16 @@ DefiLlama's free APIs:
 from __future__ import annotations
 
 import time
+from threading import Lock
 from typing import Dict, List, Optional
 
 import requests
 from loguru import logger
 
-# Particle Universal Account 7702 EVM chains (every entry in the SDK's CHAIN_ID
-# enum except Solana 101) -> DefiLlama chain label. This is the authoritative
-# scope the AI scans when building a cross-chain strategy.
+# Particle-supported chains -> DefiLlama chain label. Solana is included for
+# discovery and strategy; execution adapters still determine transaction support.
 SUPPORTED_CHAINS: Dict[int, str] = {
+    101: "Solana",
     1: "Ethereum",        # ETHEREUM_MAINNET
     10: "Optimism",       # OPTIMISM_MAINNET
     56: "BSC",            # BSC_MAINNET
@@ -66,8 +67,10 @@ _CHAIN_ALIASES = {
 
 YIELDS_URL = "https://yields.llama.fi/pools"
 PROTOCOL_URL = "https://api.llama.fi/protocol/{slug}"
+CHAINS_URL = "https://api.llama.fi/v2/chains"
 POOL_CHART_URL = "https://yields.llama.fi/chart/{pool}"
-CACHE_TTL_SECONDS = 300  # the global pools payload is large; refresh at most every 5 minutes
+CACHE_TTL_SECONDS = 300  # refresh at most every 5 minutes to balance freshness and rate limits
+CHART_CACHE_TTL_SECONDS = 900
 
 
 class DefiLlamaCollector:
@@ -76,6 +79,14 @@ class DefiLlamaCollector:
     def __init__(self) -> None:
         self._pools_cache: Optional[List[dict]] = None
         self._pools_fetched_at: float = 0.0
+        self._pools_by_chain: Dict[str, List[dict]] = {}
+        self._chains_cache: Optional[List[dict]] = None
+        self._chains_fetched_at: float = 0.0
+        self._chart_cache: Dict[str, tuple[float, List[dict]]] = {}
+        self._chart_backoff_until: Dict[str, float] = {}
+        self._pools_lock = Lock()
+        self._chart_lock = Lock()
+        self._http = requests.Session()
 
     # -- internals ------------------------------------------------------------
     @staticmethod
@@ -95,20 +106,72 @@ class DefiLlamaCollector:
         if not force and self._pools_cache is not None and (now - self._pools_fetched_at) < CACHE_TTL_SECONDS:
             return self._pools_cache
 
-        try:
-            response = requests.get(YIELDS_URL, timeout=20)
-            response.raise_for_status()
-            pools = response.json().get("data", []) or []
-            self._pools_cache = pools
-            self._pools_fetched_at = now
-            logger.info(f"DefiLlama: fetched {len(pools)} pools")
-            return pools
-        except Exception as exc:
-            logger.error(f"DefiLlama yields fetch failed: {exc}")
-            return self._pools_cache or []
+        # Single-flight: concurrent API requests share one upstream request.
+        with self._pools_lock:
+            now = time.monotonic()
+            if not force and self._pools_cache is not None and (now - self._pools_fetched_at) < CACHE_TTL_SECONDS:
+                return self._pools_cache
+            try:
+                response = self._http.get(YIELDS_URL, timeout=20)
+                response.raise_for_status()
+                pools = response.json().get("data", []) or []
+                by_chain: Dict[str, List[dict]] = {}
+                for pool in pools:
+                    key = self._normalize_chain(str(pool.get("chain") or ""))
+                    by_chain.setdefault(key, []).append(pool)
+                for values in by_chain.values():
+                    values.sort(key=lambda p: p.get("tvlUsd", 0) or 0, reverse=True)
+                self._pools_cache = pools
+                self._pools_by_chain = by_chain
+                self._pools_fetched_at = now
+                logger.info(f"DefiLlama: fetched {len(pools)} pools and indexed {len(by_chain)} chains")
+                return pools
+            except Exception as exc:
+                logger.error(f"DefiLlama yields fetch failed: {exc}")
+                return self._pools_cache or []
 
     def supported_chain_ids(self) -> List[int]:
         return sorted(SUPPORTED_CHAINS.keys())
+
+    def fetch_chain_tvl(self, *, force: bool = False) -> List[dict]:
+        """Return current TVL for all chains from DefiLlama's public TVL API."""
+        now = time.monotonic()
+        if not force and self._chains_cache is not None and (now - self._chains_fetched_at) < CACHE_TTL_SECONDS:
+            return self._chains_cache
+
+        with self._pools_lock:
+            now = time.monotonic()
+            if not force and self._chains_cache is not None and (now - self._chains_fetched_at) < CACHE_TTL_SECONDS:
+                return self._chains_cache
+            try:
+                response = self._http.get(CHAINS_URL, timeout=15)
+                response.raise_for_status()
+                payload = response.json()
+                chains = payload if isinstance(payload, list) else []
+                self._chains_cache = chains
+                self._chains_fetched_at = now
+                logger.info(f"DefiLlama: fetched TVL for {len(chains)} chains")
+                return chains
+            except Exception as exc:
+                logger.warning(f"DefiLlama chain TVL fetch failed: {exc}")
+                return self._chains_cache or []
+
+    def fetch_supported_chain_tvl(self) -> Dict[int, dict]:
+        """Map supported Particle chain IDs to DefiLlama's current chain TVL."""
+        result: Dict[int, dict] = {}
+        for item in self.fetch_chain_tvl():
+            name = str(item.get("name") or "")
+            for chain_id, chain_name in SUPPORTED_CHAINS.items():
+                if self._chain_matches(name, chain_name):
+                    result[chain_id] = {
+                        "chain_id": chain_id,
+                        "chain": chain_name,
+                        "tvl": float(item.get("tvl") or 0),
+                        "token_symbol": item.get("tokenSymbol"),
+                        "source": "defillama-chain-tvl",
+                    }
+                    break
+        return result
 
     def chain_name(self, chain_id: int) -> Optional[str]:
         return SUPPORTED_CHAINS.get(chain_id)
@@ -118,22 +181,48 @@ class DefiLlamaCollector:
         name = SUPPORTED_CHAINS.get(chain_id)
         if not name:
             return []
-        pools = [p for p in self.fetch_all_pools() if self._chain_matches(p.get("chain", ""), name)]
-        pools.sort(key=lambda p: p.get("tvlUsd", 0) or 0, reverse=True)
-        return pools
+        self.fetch_all_pools()
+        target = self._normalize_chain(name)
+        pools = self._pools_by_chain.get(target)
+        if pools is not None:
+            return pools
+        # Keep tolerant matching for aliases not known by the index.
+        return [p for p in self._pools_cache or [] if self._chain_matches(p.get("chain", ""), name)]
 
     def fetch_pool_chart(self, pool_id: str) -> List[dict]:
         """Return historical APY/TVL points for one pool from the free API."""
         if not pool_id:
             return []
-        try:
-            response = requests.get(POOL_CHART_URL.format(pool=pool_id), timeout=15)
-            response.raise_for_status()
-            payload = response.json()
-            return payload if isinstance(payload, list) else payload.get("data", []) or []
-        except Exception as exc:
-            logger.warning(f"DefiLlama pool chart failed for {pool_id}: {exc}")
-            return []
+        now = time.monotonic()
+        if now < self._chart_backoff_until.get(pool_id, 0):
+            cached = self._chart_cache.get(pool_id)
+            return cached[1] if cached else []
+        cached = self._chart_cache.get(pool_id)
+        if cached and now - cached[0] < CHART_CACHE_TTL_SECONDS:
+            return cached[1]
+        with self._chart_lock:
+            cached = self._chart_cache.get(pool_id)
+            if cached and now - cached[0] < CHART_CACHE_TTL_SECONDS:
+                return cached[1]
+            try:
+                response = self._http.get(POOL_CHART_URL.format(pool=pool_id), timeout=15)
+                response.raise_for_status()
+                payload = response.json()
+                points = payload if isinstance(payload, list) else payload.get("data", []) or []
+                self._chart_cache[pool_id] = (time.monotonic(), points)
+                return points
+            except Exception as exc:
+                if getattr(exc, "response", None) is not None and exc.response.status_code == 429:
+                    retry_after = exc.response.headers.get("Retry-After")
+                    try:
+                        delay = max(300, min(1800, int(retry_after)))
+                    except (TypeError, ValueError):
+                        delay = 900
+                    self._chart_backoff_until[pool_id] = time.monotonic() + delay
+                    logger.warning(f"DefiLlama chart rate-limited for {pool_id}; backing off {delay}s")
+                    return cached[1] if cached else []
+                logger.warning(f"DefiLlama pool chart failed for {pool_id}: {exc}")
+                return cached[1] if cached else []
 
     def fetch_chain_protocol_summary(self, chain_id: int, limit: int = 12) -> List[dict]:
         """Highest-TVL pool per protocol on a chain -> compact summary list."""

@@ -21,6 +21,11 @@ class Settings:
     maximum_apy: float
     maximum_intent_amount_usd: float
     use_llm_strategy_reasoning: bool
+    enable_chart_history: bool
+    mongo_required: bool
+    market_data_url: str
+    market_history_url: str
+    market_data_required: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -28,10 +33,15 @@ class Settings:
             service_name="mom3 Agentkit",
             service_version="3.0.0",
             cors_origins=_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000")),
-            minimum_tvl_usd=float(os.getenv("MVP_MIN_TVL_USD", "1000000")),
-            maximum_apy=float(os.getenv("MVP_MAX_APY", "20")),
-            maximum_intent_amount_usd=float(os.getenv("MVP_MAX_INTENT_AMOUNT_USD", "10000")),
+            minimum_tvl_usd=float(os.getenv("MARKET_MIN_TVL_USD", "0")),
+            maximum_apy=float(os.getenv("MARKET_MAX_APY", "10000")),
+            maximum_intent_amount_usd=float(os.getenv("MAX_INTENT_AMOUNT_USD", "10000")),
             use_llm_strategy_reasoning=_boolean(os.getenv("AGENT_LLM_STRATEGY_REASONING", "false")),
+            enable_chart_history=_boolean(os.getenv("AGENTKIT_ENABLE_CHART_HISTORY", "false")),
+            mongo_required=_boolean(os.getenv("AGENTKIT_MONGO_REQUIRED", "true")),
+            market_data_url=os.getenv("MARKET_DATA_URL", "").strip(),
+            market_history_url=os.getenv("MARKET_HISTORY_URL", os.getenv("MARKET_DATA_URL", "")).strip(),
+            market_data_required=_boolean(os.getenv("MARKET_DATA_REQUIRED", "false")),
         )
 
 
