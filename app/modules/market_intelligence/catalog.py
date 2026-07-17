@@ -23,6 +23,12 @@ def _number(value) -> float:
         return 0.0
 
 
+def _boolean(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() not in {"", "no", "false", "0", "none", "null"}
+
+
 class MarketCatalog:
     """Builds a live catalog from all DefiLlama pools on supported chains."""
 
@@ -147,7 +153,7 @@ class MarketCatalog:
             "tvl": round(tvl, 2),
             "stablecoin": bool(pool.get("stablecoin", False)),
             "exposure": str(pool.get("exposure") or "unknown"),
-            "impermanent_loss": bool(pool.get("ilRisk", False)),
+            "impermanent_loss": _boolean(pool.get("ilRisk", False)),
             "risk_score": risk_score,
             "opportunity_score": opportunity_score,
             "prediction": {

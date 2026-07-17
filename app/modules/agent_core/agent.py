@@ -203,7 +203,10 @@ class Mom3Agent:
         if not scored:
             return []
 
-        target_count = {"conservative": 3, "moderate": 4, "aggressive": 5}[tolerance]
+        # Keep the strategy payload rich enough for comparison. The frontend
+        # intentionally reveals only a small first page and lets the user
+        # expand it, so analysis breadth does not make the initial UI noisy.
+        target_count = {"conservative": 3, "moderate": 6, "aggressive": 8}[tolerance]
         selected: list[dict] = []
         protocol_counts: dict[str, int] = {}
         chain_counts: dict[int, int] = {}
