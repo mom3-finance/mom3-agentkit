@@ -65,6 +65,8 @@ class MarketCatalog:
                 if settings.market_data_required:
                     raise RuntimeError(f"PostgreSQL market API is unavailable: {exc}") from exc
                 pools = self.collector.fetch_all_pools()
+        elif settings.market_data_required:
+            raise RuntimeError("Backend market catalog is required. Configure MARKET_DATA_URL.")
         elif hasattr(self.collector, "fetch_all_pools"):
             pools = self.collector.fetch_all_pools()
         else:
@@ -112,11 +114,39 @@ class MarketCatalog:
         }
 
     def get_market(self, market_id: str) -> dict | None:
+        # A paginated catalog is not a reliable lookup source. The selected
+        # pool can be outside the first page even though it is still live.
+        # Resolve the exact ID from the backend catalog first, then fall back
+        # to the live collector for deployments without a backend catalog.
+        if settings.market_data_url:
+            try:
+                response = requests.get(
+                    f"{settings.market_data_url.rstrip('/')}/{market_id}",
+                    timeout=10,
+                )
+                if response.ok:
+                    payload = response.json()
+                    row = payload.get("market") if isinstance(payload, dict) else None
+                    if isinstance(row, dict):
+                        pool = self._backend_row_to_pool(row)
+                        for chain_id in self.collector.supported_chain_ids():
+                            chain_name = self.collector.chain_name(chain_id)
+                            if self.collector._chain_matches(str(pool.get("chain") or ""), chain_name or ""):
+                                market = self._normalize(pool, chain_id)
+                                if market and market["market_id"] == market_id:
+                                    return market
+            except Exception:
+                # The list/live path below remains the compatibility fallback.
+                pass
+        if settings.market_data_required:
+            return None
         return next((market for market in self.list_markets() if market["market_id"] == market_id), None)
 
     def get_history(self, market_id: str, range_name: str = "30d") -> list[dict]:
         """Read chart history from the backend snapshot API when configured."""
         if not settings.market_history_url:
+            if settings.market_data_required:
+                raise RuntimeError("Backend market history URL is required.")
             return []
         url = f"{settings.market_history_url.rstrip('/')}/{market_id}/history"
         response = requests.get(url, params={"range": range_name}, timeout=10)
