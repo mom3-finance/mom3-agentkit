@@ -18,31 +18,16 @@ from typing import Dict, List, Optional
 import requests
 from loguru import logger
 
-# Particle-supported chains -> DefiLlama chain label. Solana is included for
-# discovery and strategy; execution adapters still determine transaction support.
+# Particle Universal Account v2-supported chains -> DefiLlama chain label.
+# This is the market-discovery boundary: pools outside this set are never
+# returned to AgentKit and therefore cannot be recommended by the product.
 SUPPORTED_CHAINS: Dict[int, str] = {
     101: "Solana",
-    1: "Ethereum",        # ETHEREUM_MAINNET
-    10: "Optimism",       # OPTIMISM_MAINNET
-    56: "BSC",            # BSC_MAINNET
-    137: "Polygon",       # POLYGON_MAINNET
-    146: "Sonic",         # SONIC_MAINNET
-    169: "Manta",         # MANTA_MAINNET
-    196: "XLayer",        # XLAYER_MAINNET (DefiLlama: "XLayer")
-    500: "Mantle",        # (reserved/fallback)
-    5000: "Mantle",       # MANTLE_MAINNET
-    81457: "Blast",       # BLAST_MAINNET
-    34443: "Mode",        # MODE_MAINNET
+    1: "Ethereum",
+    56: "BSC",
+    196: "XLayer",
     42161: "Arbitrum",    # ARBITRUM_MAINNET_ONE
-    43114: "Avalanche",   # AVALANCHE_MAINNET
-    8453: "Base",         # BASE_MAINNET
-    59144: "Linea",       # LINEA_MAINNET
-    80094: "Berachain",   # BERACHAIN_MAINNET
-    143: "Monad",         # MONAD_MAINNET
-    999: "HyperEVM",      # HYPEREVM_MAINNET
-    9745: "Plasma",       # PLASMA_MAINNET
-    1030: "Conflux",      # CONFLUX_ESPACE_MAINNET
-    4200: "Merlin",       # MERLIN_MAINNET
+    8453: "Base",
 }
 
 # Chain labels that DefiLlama sometimes emits as alternates.
