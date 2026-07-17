@@ -177,7 +177,14 @@ class Mom3Agent:
         tolerance: RiskTolerance,
         home_chain: int | None,
     ) -> list[dict]:
-        eligible = [market for market in markets if self._risk_eligible(market, tolerance)]
+        # Strategy recommendations must be actionable by the user. Discovery
+        # markets remain available to Explore, but non-allowlisted pools must
+        # never be recommended as executable strategy opportunities.
+        eligible = [
+            market for market in markets
+            if market.get("execution", {}).get("enabled") is True
+            and self._risk_eligible(market, tolerance)
+        ]
         # A risk profile is a hard guardrail. Scoring only ranks candidates
         # inside the selected risk band; it must not promote a high-risk pool
         # just because its APY is larger.
