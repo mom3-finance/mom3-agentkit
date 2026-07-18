@@ -108,6 +108,18 @@ def yield_markets(
         raise HTTPException(status_code=502, detail="Live yield markets are unavailable.") from exc
 
 
+@router.get("/api/yield-markets/top", tags=["markets"])
+def top_yield_markets(
+    limit: int = Query(default=10, ge=1, le=10),
+    chain_id: int | None = Query(default=None),
+):
+    try:
+        return JSONResponse(content=json_safe(agent.top_yields(limit, chain_id)))
+    except Exception as exc:
+        logger.error(f"Top yield markets failed: {exc}")
+        raise HTTPException(status_code=502, detail="Top yield analysis is unavailable.") from exc
+
+
 @router.get("/api/yield-markets/{market_id}", tags=["markets"])
 def yield_market_detail(market_id: str):
     try:

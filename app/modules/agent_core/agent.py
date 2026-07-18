@@ -53,6 +53,49 @@ class Mom3Agent:
             "markets": rows,
         }
 
+    def top_yields(self, limit: int = 10, chain_id: int | None = None) -> dict:
+        """Rank the complete canonical catalog before returning the top yields."""
+        markets = self.catalog.list_markets(chain_id)
+
+        def rank_key(item: dict) -> tuple[float, float, float, float]:
+            return (
+                float(item.get("opportunity_score") or 0),
+                float(item.get("apy") or 0),
+                float(item.get("tvl") or 0),
+                -float(item.get("risk_score") or 10),
+            )
+
+        ranked = sorted(markets, key=rank_key, reverse=True)[: max(1, min(int(limit), 10))]
+        rows = []
+        for position, market in enumerate(ranked, start=1):
+            score = round(float(market.get("opportunity_score") or 0), 4)
+            rows.append({
+                **market,
+                "rank": position,
+                "ai_analysis": {
+                    "score": score,
+                    "signals": {
+                        "apy": float(market.get("apy") or 0),
+                        "tvl": float(market.get("tvl") or 0),
+                        "risk_score": float(market.get("risk_score") or 0),
+                        "execution_enabled": bool(market.get("execution", {}).get("enabled")),
+                    },
+                    "summary": "Ranked by AgentKit opportunity score using APY, TVL, risk, and execution readiness.",
+                },
+            })
+
+        return {
+            "timestamp": self.now_iso(),
+            "chain_id": chain_id,
+            "analysis": {
+                "engine": "mom3 AgentKit",
+                "scope": "all canonical Particle-compatible markets",
+                "market_count": len(markets),
+                "ranking": "opportunity_score desc, APY desc, TVL desc, risk asc",
+            },
+            "markets": rows,
+        }
+
     def strategy(self, risk_tolerance: RiskTolerance, home_chain: int | None = None) -> dict:
         # Strategy only needs actionable candidates. Asking the PostgreSQL
         # catalog for executable rows avoids loading the first discovery page
