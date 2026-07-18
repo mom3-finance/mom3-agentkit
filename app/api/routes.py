@@ -122,7 +122,6 @@ def yield_market_detail(market_id: str):
                     (
                         item for item in agent.catalog.list_markets(fallback_chain)
                         if item.get("project") == "aave-v3"
-                        and str(item.get("symbol", "")).upper() == "USDC"
                     ),
                     None,
                 )
