@@ -9,6 +9,7 @@ load_dotenv()
 
 from app.api.routes import router
 from app.core.config import settings
+from app.modules.market_intelligence.sync_worker import get_market_sync_worker
 
 
 def create_app() -> FastAPI:
@@ -28,6 +29,15 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Authorization"],
     )
     application.include_router(router)
+
+    @application.on_event("startup")
+    async def start_market_sync() -> None:
+        get_market_sync_worker().start()
+
+    @application.on_event("shutdown")
+    async def stop_market_sync() -> None:
+        get_market_sync_worker().stop()
+
     return application
 
 

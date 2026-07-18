@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 import requests
 from typing import Optional
 
@@ -38,6 +39,7 @@ class MarketCatalog:
         # remains injectable for compatibility with older callers, but is not
         # used as a source of market data.
         self.store = store
+        self._backend_cache: dict[tuple, tuple[float, list[dict]]] = {}
 
     def list_markets(
         self,
@@ -50,17 +52,12 @@ class MarketCatalog:
         chains = [chain_id] if chain_id is not None else supported_chain_ids()
         markets: list[dict] = []
         seen: set[str] = set()
+        using_backend_catalog = False
 
         if settings.market_data_url:
             try:
-                params = {"limit": "100", "page": "1"}
-                if chain_id is not None: params["chain_id"] = str(chain_id)
-                if protocol: params["protocol"] = protocol
-                if execution_only: params["execution_only"] = "true"
-                response = requests.get(settings.market_data_url, params=params, timeout=10)
-                response.raise_for_status()
-                pools = response.json().get("markets", [])
-                pools = [self._backend_row_to_pool(pool) for pool in pools]
+                pools = self._fetch_backend_markets(chain_id, protocol, execution_only)
+                using_backend_catalog = True
             except Exception as exc:
                 if settings.market_data_required:
                     raise RuntimeError(f"PostgreSQL market API is unavailable: {exc}") from exc
@@ -82,7 +79,7 @@ class MarketCatalog:
             for pool in chain_pools:
                 if protocol and str(pool.get("project") or "").lower() != protocol.lower():
                     continue
-                market = self._normalize(pool, cid)
+                market = self._backend_row_to_market(pool) if using_backend_catalog else self._normalize(pool, cid)
                 if not market or market["market_id"] in seen:
                     continue
                 if execution_only and not market["execution"]["enabled"]:
@@ -99,6 +96,80 @@ class MarketCatalog:
         )
         return markets
 
+    def _fetch_backend_markets(self, chain_id: int | None, protocol: str | None, execution_only: bool) -> list[dict]:
+        """Read the canonical persisted catalog without re-running discovery normalization."""
+        cache_key = (chain_id, protocol, execution_only)
+        cached = self._backend_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < 20:
+            return cached[1]
+        if settings.market_catalog_url:
+            response = requests.get(
+                settings.market_catalog_url,
+                headers={"Authorization": f"Bearer {settings.market_ingest_token}"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("markets", []) if isinstance(payload, dict) else []
+            self._backend_cache[cache_key] = (time.monotonic(), rows)
+            return rows
+        rows: list[dict] = []
+        page = 1
+        while True:
+            params = {"limit": "50", "page": str(page)}
+            if chain_id is not None:
+                params["chain_id"] = str(chain_id)
+            if protocol:
+                params["protocol"] = protocol
+            if execution_only:
+                params["execution_only"] = "true"
+            response = requests.get(settings.market_data_url, params=params, timeout=10)
+            response.raise_for_status()
+            payload = response.json()
+            page_rows = payload.get("markets", []) if isinstance(payload, dict) else []
+            rows.extend(page_rows)
+            pagination = payload.get("pagination", {}) if isinstance(payload, dict) else {}
+            if not page_rows or not pagination.get("has_next"):
+                break
+            page += 1
+            if page > 500:
+                break
+        self._backend_cache[cache_key] = (time.monotonic(), rows)
+        return rows
+
+    def build_live_markets(self) -> list[dict]:
+        """Fetch, filter, normalize, and score DefiLlama data in AgentKit."""
+        pools = self.collector.fetch_all_pools(force=True)
+        markets: list[dict] = []
+        seen: set[str] = set()
+        for chain_id in self.collector.supported_chain_ids():
+            chain_name = self.collector.chain_name(chain_id) or ""
+            for pool in pools:
+                if not self.collector._chain_matches(str(pool.get("chain") or ""), chain_name):
+                    continue
+                market = self._normalize(pool, chain_id)
+                if market and market["market_id"] not in seen:
+                    market["source"] = "agentkit-defillama"
+                    market["source_url"] = "https://yields.llama.fi/pools"
+                    seen.add(market["market_id"])
+                    markets.append(market)
+        markets.sort(key=lambda item: (-item["opportunity_score"], -item["tvl"]))
+        return markets
+
+    def sync_live_markets(self) -> dict:
+        if not settings.market_ingest_url or not settings.market_ingest_token:
+            raise RuntimeError("MARKET_INGEST_URL and MARKET_INGEST_TOKEN are required for market sync.")
+        markets = self.build_live_markets()
+        response = requests.post(
+            settings.market_ingest_url,
+            json={"markets": markets},
+            headers={"Authorization": f"Bearer {settings.market_ingest_token}", "Content-Type": "application/json"},
+            timeout=60,
+        )
+        response.raise_for_status()
+        self._backend_cache.clear()
+        return response.json()
+
     @staticmethod
     def _backend_row_to_pool(row: dict) -> dict:
         return {
@@ -111,6 +182,46 @@ class MarketCatalog:
             "apyPct7D": row.get("apy_change_7d"),
             "apyPct30D": row.get("apy_change_30d"),
             "ilRisk": "yes" if row.get("impermanent_loss") else "no",
+        }
+
+    @staticmethod
+    def _backend_row_to_market(row: dict) -> dict:
+        execution = row.get("execution") or {}
+        return {
+            "market_id": row.get("market_id") or row.get("pool_id") or row.get("poolId"),
+            "pool_id": row.get("pool_id") or row.get("market_id") or row.get("poolId"),
+            "protocol": row.get("protocol") or row.get("project"),
+            "project": row.get("project") or str(row.get("protocol") or "").lower().replace(" ", "-"),
+            "symbol": row.get("symbol") or row.get("asset"),
+            "asset": row.get("asset") or row.get("symbol"),
+            "chain": row.get("chain"),
+            "chain_id": int(row.get("chain_id") or row.get("chainId") or 0),
+            "ua_supported": bool(row.get("ua_supported")),
+            "apy": _number(row.get("apy")),
+            "apy_base": _number(row.get("apy_base", row.get("apyBase"))),
+            "apy_reward": _number(row.get("apy_reward", row.get("apyReward"))),
+            "apy_change_1d": _number(row.get("apy_change_1d", row.get("apyChange1d"))),
+            "apy_change_7d": _number(row.get("apy_change_7d", row.get("apyChange7d"))),
+            "apy_change_30d": _number(row.get("apy_change_30d", row.get("apyChange30d"))),
+            "tvl": _number(row.get("tvl_usd", row.get("tvlUsd", row.get("tvl")))),
+            "stablecoin": bool(row.get("stablecoin")),
+            "exposure": row.get("exposure"),
+            "impermanent_loss": row.get("impermanent_loss"),
+            "risk_score": _number(row.get("risk_score", row.get("riskScore"))),
+            "opportunity_score": _number(row.get("opportunity_score", row.get("opportunityScore"))),
+            "execution": {
+                "enabled": bool(execution.get("enabled")),
+                "actions": execution.get("actions") or [],
+                "type": execution.get("type"),
+                "requires_user_confirmation": execution.get("requires_user_confirmation", True),
+                "uses_eip7702": execution.get("uses_eip7702", True),
+                "contract": execution.get("contract"),
+                "asset_address": execution.get("asset_address"),
+                "asset_decimals": execution.get("asset_decimals"),
+                "position_symbol": execution.get("position_symbol"),
+            },
+            "source": row.get("source") or "postgresql",
+            "source_url": row.get("source_url"),
         }
 
     def get_market(self, market_id: str) -> dict | None:
@@ -128,13 +239,9 @@ class MarketCatalog:
                     payload = response.json()
                     row = payload.get("market") if isinstance(payload, dict) else None
                     if isinstance(row, dict):
-                        pool = self._backend_row_to_pool(row)
-                        for chain_id in self.collector.supported_chain_ids():
-                            chain_name = self.collector.chain_name(chain_id)
-                            if self.collector._chain_matches(str(pool.get("chain") or ""), chain_name or ""):
-                                market = self._normalize(pool, chain_id)
-                                if market and market["market_id"] == market_id:
-                                    return market
+                        market = self._backend_row_to_market(row)
+                        if market and market["market_id"] == market_id:
+                            return market
             except Exception:
                 # The list/live path below remains the compatibility fallback.
                 pass
@@ -161,6 +268,8 @@ class MarketCatalog:
         apy = _number(pool.get("apy"))
 
         if not project or not symbol or not pool.get("pool"):
+            return None
+        if tvl < settings.minimum_tvl_usd or apy < 0 or apy > settings.maximum_apy:
             return None
 
         market_id = str(pool.get("pool") or f"{project}:{chain_id}:{symbol}")
@@ -211,7 +320,7 @@ class MarketCatalog:
                 "asset_decimals": execution.asset_decimals if execution else None,
                 "position_symbol": execution.position_symbol if execution else None,
             },
-            "source": "postgresql" if settings.market_data_url else "defillama-live",
+            "source": "agentkit-defillama" if not settings.market_data_url else "postgresql",
             "source_url": settings.market_data_url or "https://yields.llama.fi/pools",
         }
 
