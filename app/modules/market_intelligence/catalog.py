@@ -152,7 +152,7 @@ class MarketCatalog:
 
     @classmethod
     def _rank_and_dedupe(cls, markets: list[dict]) -> list[dict]:
-        """Keep a compact, executable-first catalog with unique pool/contracts."""
+        """Keep only executable markets with unique pools/contracts."""
         ranked = sorted(
             markets,
             key=lambda item: (
@@ -165,6 +165,8 @@ class MarketCatalog:
         seen_contracts: set[str] = set()
         result: list[dict] = []
         for market in ranked:
+            if not bool((market.get("execution") or {}).get("enabled")):
+                continue
             pool_id = str(market.get("pool_id") or market.get("market_id") or "").strip().lower()
             if not pool_id or pool_id in seen_pools:
                 continue
