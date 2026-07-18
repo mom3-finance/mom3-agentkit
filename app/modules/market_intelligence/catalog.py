@@ -190,15 +190,23 @@ class MarketCatalog:
         if not settings.market_ingest_url or not settings.market_ingest_token:
             raise RuntimeError("MARKET_INGEST_URL and MARKET_INGEST_TOKEN are required for market sync.")
         markets = self.build_live_markets()
-        response = requests.post(
-            settings.market_ingest_url,
-            json={"markets": markets},
-            headers={"Authorization": f"Bearer {settings.market_ingest_token}", "Content-Type": "application/json"},
-            timeout=60,
-        )
-        response.raise_for_status()
-        self._backend_cache.clear()
-        return response.json()
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    settings.market_ingest_url,
+                    json={"markets": markets},
+                    headers={"Authorization": f"Bearer {settings.market_ingest_token}", "Content-Type": "application/json"},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                self._backend_cache.clear()
+                return response.json()
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+        raise RuntimeError(f"Market ingest failed after 3 attempts: {last_error}") from last_error
 
     @staticmethod
     def _backend_row_to_pool(row: dict) -> dict:
