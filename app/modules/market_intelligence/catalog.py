@@ -187,6 +187,7 @@ class MarketCatalog:
     @staticmethod
     def _backend_row_to_market(row: dict) -> dict:
         execution = row.get("execution") or {}
+        execution_enabled = execution.get("enabled") if "enabled" in execution else row.get("execution_enabled", row.get("executionEnabled"))
         return {
             "market_id": row.get("market_id") or row.get("pool_id") or row.get("poolId"),
             "pool_id": row.get("pool_id") or row.get("market_id") or row.get("poolId"),
@@ -210,15 +211,15 @@ class MarketCatalog:
             "risk_score": _number(row.get("risk_score", row.get("riskScore"))),
             "opportunity_score": _number(row.get("opportunity_score", row.get("opportunityScore"))),
             "execution": {
-                "enabled": bool(execution.get("enabled")),
+                "enabled": bool(execution_enabled),
                 "actions": execution.get("actions") or [],
-                "type": execution.get("type"),
+                "type": execution.get("type") or row.get("execution_type") or row.get("executionType"),
                 "requires_user_confirmation": execution.get("requires_user_confirmation", True),
                 "uses_eip7702": execution.get("uses_eip7702", True),
-                "contract": execution.get("contract"),
-                "asset_address": execution.get("asset_address"),
-                "asset_decimals": execution.get("asset_decimals"),
-                "position_symbol": execution.get("position_symbol"),
+                "contract": execution.get("contract") or row.get("contract_address") or row.get("contractAddress"),
+                "asset_address": execution.get("asset_address") or row.get("asset_address") or row.get("assetAddress"),
+                "asset_decimals": execution.get("asset_decimals") or row.get("asset_decimals") or row.get("assetDecimals"),
+                "position_symbol": execution.get("position_symbol") or row.get("position_symbol") or row.get("positionSymbol"),
             },
             "source": row.get("source") or "postgresql",
             "source_url": row.get("source_url"),
