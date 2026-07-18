@@ -13,6 +13,7 @@ from .policy import (
     PROTOCOL_BASE_RISK,
     PROTOCOL_LABELS,
     execution_market_for,
+    is_stablecoin_symbol,
 )
 
 
@@ -32,6 +33,7 @@ def _boolean(value) -> bool:
 
 class MarketCatalog:
     MAX_PERSISTED_MARKETS = 100
+    FOCUS_CHAIN_IDS = {101, 8453, 42161}
 
     """Builds a live catalog from all DefiLlama pools on supported chains."""
 
@@ -50,8 +52,9 @@ class MarketCatalog:
         execution_only: bool = False,
         protocol: str | None = None,
     ) -> list[dict]:
-        supported_chain_ids = getattr(self.collector, "supported_chain_ids", lambda: [42161, 8453])
-        chains = [chain_id] if chain_id is not None else supported_chain_ids()
+        supported_chain_ids = getattr(self.collector, "supported_chain_ids", lambda: [101, 8453, 42161])
+        chains = [chain_id] if chain_id is not None else [cid for cid in supported_chain_ids() if cid in self.FOCUS_CHAIN_IDS]
+        chains = [cid for cid in chains if cid in self.FOCUS_CHAIN_IDS]
         markets: list[dict] = []
         seen: set[str] = set()
         using_backend_catalog = False
@@ -296,6 +299,8 @@ class MarketCatalog:
         apy = _number(pool.get("apy"))
 
         if not project or not symbol or not pool.get("pool"):
+            return None
+        if chain_id not in self.FOCUS_CHAIN_IDS or not is_stablecoin_symbol(symbol):
             return None
         if tvl < settings.minimum_tvl_usd or apy < 0 or apy > settings.maximum_apy:
             return None
