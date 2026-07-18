@@ -31,6 +31,8 @@ def _boolean(value) -> bool:
 
 
 class MarketCatalog:
+    MAX_PERSISTED_MARKETS = 100
+
     """Builds a live catalog from all DefiLlama pools on supported chains."""
 
     def __init__(self, collector: Optional[DefiLlamaCollector] = None, store: Optional[PoolSnapshotStore] = None) -> None:
@@ -87,14 +89,7 @@ class MarketCatalog:
                 seen.add(market["market_id"])
                 markets.append(market)
 
-        markets.sort(
-            key=lambda item: (
-                not item["execution"]["enabled"],
-                -item["opportunity_score"],
-                -item["tvl"],
-            )
-        )
-        return markets
+        return self._rank_and_dedupe(markets)
 
     def _fetch_backend_markets(self, chain_id: int | None, protocol: str | None, execution_only: bool) -> list[dict]:
         """Read the canonical persisted catalog without re-running discovery normalization."""
@@ -153,8 +148,38 @@ class MarketCatalog:
                     market["source_url"] = "https://yields.llama.fi/pools"
                     seen.add(market["market_id"])
                     markets.append(market)
-        markets.sort(key=lambda item: (-item["opportunity_score"], -item["tvl"]))
-        return markets
+        return self._rank_and_dedupe(markets)
+
+    @classmethod
+    def _rank_and_dedupe(cls, markets: list[dict]) -> list[dict]:
+        """Keep a compact, executable-first catalog with unique pool/contracts."""
+        ranked = sorted(
+            markets,
+            key=lambda item: (
+                not bool((item.get("execution") or {}).get("enabled")),
+                -float(item.get("opportunity_score") or 0),
+                -float(item.get("tvl") or 0),
+            ),
+        )
+        seen_pools: set[str] = set()
+        seen_contracts: set[str] = set()
+        result: list[dict] = []
+        for market in ranked:
+            pool_id = str(market.get("pool_id") or market.get("market_id") or "").strip().lower()
+            if not pool_id or pool_id in seen_pools:
+                continue
+            execution = market.get("execution") or {}
+            contract = str(execution.get("contract") or "").strip().lower()
+            contract_key = f"{market.get('chain_id')}:{contract}" if contract else ""
+            if contract_key and contract_key in seen_contracts:
+                continue
+            seen_pools.add(pool_id)
+            if contract_key:
+                seen_contracts.add(contract_key)
+            result.append(market)
+            if len(result) >= cls.MAX_PERSISTED_MARKETS:
+                break
+        return result
 
     def sync_live_markets(self) -> dict:
         if not settings.market_ingest_url or not settings.market_ingest_token:
