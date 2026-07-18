@@ -120,6 +120,20 @@ def top_yield_markets(
         raise HTTPException(status_code=502, detail="Top yield analysis is unavailable.") from exc
 
 
+@router.get("/api/ai/market-analysis", tags=["agent"])
+def market_analysis_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=10),
+    chain_id: int | None = Query(default=None),
+    risk_tolerance: Literal["conservative", "moderate", "aggressive"] = "moderate",
+):
+    try:
+        return JSONResponse(content=json_safe(agent.market_analysis_page(page, page_size, chain_id, risk_tolerance)))
+    except Exception as exc:
+        logger.error(f"Market analysis page failed: {exc}")
+        raise HTTPException(status_code=502, detail="Market analysis is temporarily unavailable.") from exc
+
+
 @router.get("/api/yield-markets/{market_id}", tags=["markets"])
 def yield_market_detail(market_id: str):
     try:
@@ -160,6 +174,17 @@ def yield_market_detail(market_id: str):
     except Exception as exc:
         logger.error(f"Yield market detail failed: {exc}")
         raise HTTPException(status_code=502, detail="Live yield market is unavailable.") from exc
+
+
+@router.get("/api/yield-markets/{market_id}/analysis", tags=["markets"])
+def yield_market_analysis(market_id: str):
+    try:
+        return JSONResponse(content=json_safe(agent.market_analysis(market_id)))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Live yield market was not found.") from exc
+    except Exception as exc:
+        logger.error(f"Yield market analysis failed: {exc}")
+        raise HTTPException(status_code=502, detail="Live market analysis is unavailable.") from exc
 
 
 @router.get("/api/yield-markets/{market_id}/chart", tags=["markets"])

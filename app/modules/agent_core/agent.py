@@ -96,6 +96,117 @@ class Mom3Agent:
             "markets": rows,
         }
 
+    def market_analysis(self, market_id: str) -> dict:
+        """Build a senior-style analysis from the persisted canonical market."""
+        market = self.catalog.get_market(market_id)
+        if not market:
+            raise KeyError(market_id)
+        forecast = self._forecasts([market])[0]
+        pulse = self._pulses([market])[0]
+        return {
+            "timestamp": self.now_iso(),
+            "market_id": market_id,
+            "data_source": "PostgreSQL canonical market catalog + market snapshots",
+            "market": market,
+            "analysis": self._senior_market_analysis(market, forecast, pulse),
+        }
+
+    def market_analysis_page(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        chain_id: int | None = None,
+        risk_tolerance: RiskTolerance = "moderate",
+    ) -> dict:
+        """Rank the complete DB catalog, then return one small analysis page."""
+        markets = self.catalog.list_markets(chain_id)
+        eligible = [market for market in markets if self._risk_eligible(market, risk_tolerance)]
+        ranked = sorted(
+            eligible,
+            key=lambda market: self._market_profile_score(market, risk_tolerance, chain_id),
+            reverse=True,
+        )
+        safe_page = max(1, int(page))
+        safe_size = max(1, min(int(page_size), 10))
+        start = (safe_page - 1) * safe_size
+        selected = ranked[start:start + safe_size]
+        forecasts = {item["market_id"]: item for item in self._forecasts(selected)}
+        pulses = {item["market_id"]: item for item in self._pulses(selected)}
+        rows = []
+        for index, market in enumerate(selected, start=start + 1):
+            forecast = forecasts[market["market_id"]]
+            pulse = pulses[market["market_id"]]
+            rows.append({
+                **market,
+                "rank": index,
+                "analysis": self._senior_market_analysis(market, forecast, pulse),
+            })
+        total = len(ranked)
+        return {
+            "timestamp": self.now_iso(),
+            "data_source": "PostgreSQL canonical market catalog + market snapshots",
+            "analysis": {
+                "engine": "mom3 AgentKit senior market analyst",
+                "scope": "all Particle-compatible canonical markets",
+                "market_count": total,
+                "risk_tolerance": risk_tolerance,
+                "ranking": "profile score using APY, TVL, risk, trend, rewards, and execution readiness",
+                "summary": f"AgentKit reviewed {total:,} canonical markets from PostgreSQL and ranked them for a {risk_tolerance} profile.",
+            },
+            "markets": rows,
+            "pagination": {
+                "page": safe_page,
+                "page_size": safe_size,
+                "total": total,
+                "has_next": start + len(rows) < total,
+                "next_page": safe_page + 1 if start + len(rows) < total else None,
+            },
+        }
+
+    def _senior_market_analysis(self, market: dict, forecast: dict, pulse: dict) -> dict:
+        apy = float(market.get("apy") or 0)
+        base_apy = float(market.get("apy_base") or 0)
+        reward_apy = float(market.get("apy_reward") or 0)
+        risk = float(market.get("risk_score") or 0)
+        confidence = round(float(forecast.get("confidence") or 0), 2)
+        trend = str(forecast.get("trend") or "stable")
+        outlook = {"rising": "Positive", "declining": "Cautious", "stable": "Neutral"}.get(trend, "Neutral")
+        execution_ready = bool(market.get("execution", {}).get("enabled"))
+        reward_share = reward_apy / apy * 100 if apy > 0 else 0
+        recommendation = "consider" if execution_ready and risk <= 7 else "watch"
+        if risk >= 8.5:
+            recommendation = "watch"
+        return {
+            "confidence": {
+                "score": confidence,
+                "percent": round(confidence * 100),
+                "label": "High" if confidence >= 0.7 else "Medium" if confidence >= 0.45 else "Low",
+                "explanation": "Confidence is based on persisted snapshot history and current catalog quality; it is not a return guarantee.",
+            },
+            "market_outlook": {
+                "label": outlook,
+                "trend": trend,
+                "probability": round(float((market.get("prediction") or {}).get("probability") or confidence * 100)),
+                "forecast_7d": forecast.get("forecast_7d", []),
+                "reasoning": f"The persisted APY trend is {trend}; liquidity is {pulse.get('status', 'unmeasured').lower()} and the 7-day model path is {forecast.get('forecast_7d', [apy])[-1]:.2f}% APY.",
+            },
+            "summary": (
+                f"{market.get('protocol', 'This market')} on {market.get('chain', 'the selected chain')} currently offers {apy:.2f}% APY "
+                f"({base_apy:.2f}% base and {reward_apy:.2f}% rewards) with {market.get('tvl', 0):,.0f} TVL. "
+                f"The outlook is {outlook.lower()} with {confidence * 100:.0f}% model confidence. "
+                f"Recommendation: {recommendation}; rates are variable and execution always requires user confirmation."
+            ),
+            "recommendation": recommendation,
+            "sections": [
+                {"title": "Market quality", "points": [f"TVL depth: {market.get('tvl', 0):,.0f}", f"Opportunity score: {float(market.get('opportunity_score') or 0):.2f}", f"Liquidity pulse: {pulse.get('status', 'Unmeasured')} "]},
+                {"title": "Yield drivers", "points": [f"Base APY: {base_apy:.2f}%", f"Reward APY: {reward_apy:.2f}% ({reward_share:.0f}% of total APY)", f"24h change: {float(market.get('apy_change_1d') or 0):+.2f}%"]},
+                {"title": "Risk review", "points": [f"Risk score: {risk:.1f}/10", f"Impermanent loss: {'Present' if market.get('impermanent_loss') else 'Not flagged'}", f"Exposure: {market.get('exposure') or 'Not specified'}"]},
+                {"title": "Execution", "points": ["Particle execution adapter verified" if execution_ready else "Watch only: no verified Particle execution adapter", "User confirmation is required for every transaction"]},
+            ],
+            "forecast": forecast,
+            "liquidity_pulse": pulse,
+        }
+
     def strategy(self, risk_tolerance: RiskTolerance, home_chain: int | None = None) -> dict:
         # Strategy only needs actionable candidates. Asking the PostgreSQL
         # catalog for executable rows avoids loading the first discovery page
