@@ -125,12 +125,15 @@ class Mom3Agent:
             key=lambda market: self._market_profile_score(market, risk_tolerance, chain_id),
             reverse=True,
         )
+        # Analyze the full canonical catalog before slicing the response page.
+        # The forecast/pulse helpers limit expensive history reads internally,
+        # while every market still receives a mode-aware senior assessment.
+        forecasts = {item["market_id"]: item for item in self._forecasts(markets)}
+        pulses = {item["market_id"]: item for item in self._pulses(markets)}
         safe_page = max(1, int(page))
         safe_size = max(1, min(int(page_size), 10))
         start = (safe_page - 1) * safe_size
         selected = ranked[start:start + safe_size]
-        forecasts = {item["market_id"]: item for item in self._forecasts(selected)}
-        pulses = {item["market_id"]: item for item in self._pulses(selected)}
         rows = []
         for index, market in enumerate(selected, start=start + 1):
             forecast = forecasts[market["market_id"]]
@@ -148,10 +151,10 @@ class Mom3Agent:
                 "engine": "mom3 AgentKit senior market analyst",
                 "scope": "all Particle-compatible canonical markets",
                 "market_count": total,
-                "analyzed_scope": "every market in the canonical catalog; page results are analyzed on demand",
+                "analyzed_scope": "every market in the canonical catalog before pagination",
                 "risk_tolerance": risk_tolerance,
                 "ranking": "profile score using APY, TVL, risk, trend, rewards, and execution readiness",
-                "summary": f"AgentKit reviewed {total:,} canonical markets from PostgreSQL and ranked them for a {risk_tolerance} profile.",
+                "summary": f"AgentKit analyzed all {total:,} canonical markets from PostgreSQL and ranked them for an {risk_tolerance} profile.",
             },
             "markets": rows,
             "pagination": {
