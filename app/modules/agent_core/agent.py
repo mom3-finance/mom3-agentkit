@@ -108,7 +108,7 @@ class Mom3Agent:
             "market_id": market_id,
             "data_source": "PostgreSQL canonical market catalog + market snapshots",
             "market": market,
-            "analysis": self._senior_market_analysis(market, forecast, pulse),
+            "analysis": self._senior_market_analysis(market, forecast, pulse, "moderate"),
         }
 
     def market_analysis_page(
@@ -120,9 +120,8 @@ class Mom3Agent:
     ) -> dict:
         """Rank the complete DB catalog, then return one small analysis page."""
         markets = self.catalog.list_markets(chain_id)
-        eligible = [market for market in markets if self._risk_eligible(market, risk_tolerance)]
         ranked = sorted(
-            eligible,
+            markets,
             key=lambda market: self._market_profile_score(market, risk_tolerance, chain_id),
             reverse=True,
         )
@@ -139,7 +138,7 @@ class Mom3Agent:
             rows.append({
                 **market,
                 "rank": index,
-                "analysis": self._senior_market_analysis(market, forecast, pulse),
+                "analysis": self._senior_market_analysis(market, forecast, pulse, risk_tolerance),
             })
         total = len(ranked)
         return {
@@ -149,6 +148,7 @@ class Mom3Agent:
                 "engine": "mom3 AgentKit senior market analyst",
                 "scope": "all Particle-compatible canonical markets",
                 "market_count": total,
+                "analyzed_scope": "every market in the canonical catalog; page results are analyzed on demand",
                 "risk_tolerance": risk_tolerance,
                 "ranking": "profile score using APY, TVL, risk, trend, rewards, and execution readiness",
                 "summary": f"AgentKit reviewed {total:,} canonical markets from PostgreSQL and ranked them for a {risk_tolerance} profile.",
@@ -163,7 +163,13 @@ class Mom3Agent:
             },
         }
 
-    def _senior_market_analysis(self, market: dict, forecast: dict, pulse: dict) -> dict:
+    def _senior_market_analysis(
+        self,
+        market: dict,
+        forecast: dict,
+        pulse: dict,
+        risk_tolerance: RiskTolerance = "moderate",
+    ) -> dict:
         apy = float(market.get("apy") or 0)
         base_apy = float(market.get("apy_base") or 0)
         reward_apy = float(market.get("apy_reward") or 0)
@@ -173,9 +179,13 @@ class Mom3Agent:
         outlook = {"rising": "Positive", "declining": "Cautious", "stable": "Neutral"}.get(trend, "Neutral")
         execution_ready = bool(market.get("execution", {}).get("enabled"))
         reward_share = reward_apy / apy * 100 if apy > 0 else 0
-        recommendation = "consider" if execution_ready and risk <= 7 else "watch"
-        if risk >= 8.5:
-            recommendation = "watch"
+        risk_ceiling = {"conservative": 4.5, "moderate": 7.0, "aggressive": 10.0}[risk_tolerance]
+        within_mode = risk <= risk_ceiling and not (
+            risk_tolerance == "conservative" and bool(market.get("impermanent_loss"))
+        )
+        recommendation = "consider" if within_mode and execution_ready else "watch"
+        if not within_mode:
+            recommendation = "avoid"
         return {
             "confidence": {
                 "score": confidence,
@@ -194,9 +204,16 @@ class Mom3Agent:
                 f"{market.get('protocol', 'This market')} on {market.get('chain', 'the selected chain')} currently offers {apy:.2f}% APY "
                 f"({base_apy:.2f}% base and {reward_apy:.2f}% rewards) with {market.get('tvl', 0):,.0f} TVL. "
                 f"The outlook is {outlook.lower()} with {confidence * 100:.0f}% model confidence. "
-                f"Recommendation: {recommendation}; rates are variable and execution always requires user confirmation."
+                f"For the {risk_tolerance} mode, this market is {recommendation}; rates are variable and execution always requires user confirmation."
             ),
             "recommendation": recommendation,
+            "risk_policy": {
+                "mode": risk_tolerance,
+                "max_risk_score": risk_ceiling,
+                "within_mode": within_mode,
+                "execution_ready": execution_ready,
+                "impermanent_loss_allowed": risk_tolerance != "conservative",
+            },
             "sections": [
                 {"title": "Market quality", "points": [f"TVL depth: {market.get('tvl', 0):,.0f}", f"Opportunity score: {float(market.get('opportunity_score') or 0):.2f}", f"Liquidity pulse: {pulse.get('status', 'Unmeasured')} "]},
                 {"title": "Yield drivers", "points": [f"Base APY: {base_apy:.2f}%", f"Reward APY: {reward_apy:.2f}% ({reward_share:.0f}% of total APY)", f"24h change: {float(market.get('apy_change_1d') or 0):+.2f}%"]},
