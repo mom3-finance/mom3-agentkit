@@ -90,7 +90,7 @@ class CatalogExecutionAssetTests(unittest.TestCase):
         def fetch_all_pools(self, force=False):
             return [
                 {"pool": "aave-usdc", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USDC", "tvlUsd": 10_000_000, "apy": 4},
-                {"pool": "aave-usdt", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USDT", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "aave-usdt", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USD₮0", "tvlUsd": 10_000_000, "apy": 4},
                 {"pool": "aave-weth", "project": "aave-v3", "chain": "Arbitrum", "symbol": "WETH", "tvlUsd": 10_000_000, "apy": 4},
             ]
 

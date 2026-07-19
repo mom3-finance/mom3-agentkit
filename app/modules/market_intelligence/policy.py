@@ -42,7 +42,8 @@ PROTOCOL_BASE_RISK = {"aave-v3": 2.8, "compound-v3": 3.6, "morpho-blue": 4.4}
 
 
 def canonical_asset_symbol(symbol: str) -> str:
-    return str(symbol or "").upper().split("-")[0].split("/")[0].strip()
+    value = str(symbol or "").upper().replace("₮", "T").split("-")[0].split("/")[0].strip()
+    return "USDT" if value in {"USDT", "USDT0"} else value
 
 
 def execution_market_for(market_id: str, project: str, symbol: str, chain_id: int) -> ExecutionMarket | None:
