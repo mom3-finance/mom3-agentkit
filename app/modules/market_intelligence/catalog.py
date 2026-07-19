@@ -13,7 +13,6 @@ from .policy import (
     PROTOCOL_BASE_RISK,
     PROTOCOL_LABELS,
     execution_market_for,
-    is_stablecoin_symbol,
 )
 
 
@@ -155,7 +154,7 @@ class MarketCatalog:
 
     @classmethod
     def _rank_and_dedupe(cls, markets: list[dict]) -> list[dict]:
-        """Keep only executable markets with unique pools/contracts."""
+        """Keep only executable markets with unique pools and supplied assets."""
         ranked = sorted(
             markets,
             key=lambda item: (
@@ -175,7 +174,8 @@ class MarketCatalog:
                 continue
             execution = market.get("execution") or {}
             contract = str(execution.get("contract") or "").strip().lower()
-            contract_key = f"{market.get('chain_id')}:{contract}" if contract else ""
+            asset = str(execution.get("asset_address") or market.get("asset") or "").strip().lower()
+            contract_key = f"{market.get('chain_id')}:{contract}:{asset}" if contract else ""
             if contract_key and contract_key in seen_contracts:
                 continue
             seen_pools.add(pool_id)
@@ -308,13 +308,15 @@ class MarketCatalog:
 
         if not project or not symbol or not pool.get("pool"):
             return None
-        if chain_id not in self.FOCUS_CHAIN_IDS or not is_stablecoin_symbol(symbol):
+        if chain_id not in self.FOCUS_CHAIN_IDS:
             return None
         if tvl < settings.minimum_tvl_usd or apy < 0 or apy > settings.maximum_apy:
             return None
 
         market_id = str(pool.get("pool") or f"{project}:{chain_id}:{symbol}")
         execution = execution_market_for(market_id, project, symbol, chain_id)
+        if not execution:
+            return None
         reward_apy = _number(pool.get("apyReward"))
         base_risk = PROTOCOL_BASE_RISK.get(project, 5.0)
         liquidity_penalty = 0.0 if tvl >= 25_000_000 else 0.6 if tvl >= 5_000_000 else 1.2
@@ -351,15 +353,15 @@ class MarketCatalog:
                 "probability": _number(prediction.get("predictedProbability")),
             },
             "execution": {
-                "enabled": execution is not None,
-                "actions": ["supply", "withdraw"] if execution else [],
-                "type": execution.execution_type if execution else None,
+                "enabled": True,
+                "actions": ["supply", "withdraw"],
+                "type": execution.execution_type,
                 "requires_user_confirmation": True,
-                "uses_eip7702": True,
-                "contract": execution.contract if execution else None,
-                "asset_address": execution.asset_address if execution else None,
-                "asset_decimals": execution.asset_decimals if execution else None,
-                "position_symbol": execution.position_symbol if execution else None,
+                "uses_eip7702": chain_id != 101,
+                "contract": execution.contract,
+                "asset_address": execution.asset_address,
+                "asset_decimals": execution.asset_decimals,
+                "position_symbol": execution.position_symbol,
             },
             "source": "agentkit-defillama" if not settings.market_data_url else "postgresql",
             "source_url": settings.market_data_url or "https://yields.llama.fi/pools",

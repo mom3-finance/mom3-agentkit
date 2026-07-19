@@ -1,6 +1,7 @@
 import unittest
 
 from app.modules.agent_core.execution import ExecutionIntentError, ExecutionIntentService
+from app.modules.market_intelligence.catalog import MarketCatalog
 
 
 MARKET = {
@@ -73,6 +74,30 @@ class ExecutionIntentTests(unittest.TestCase):
     def test_rejects_invalid_address(self):
         with self.assertRaises(ExecutionIntentError):
             self.service.create_intent(MARKET["market_id"], "supply", "1", "not-an-address")
+
+
+class CatalogExecutionAssetTests(unittest.TestCase):
+    class Collector:
+        def supported_chain_ids(self):
+            return [42161]
+
+        def chain_name(self, chain_id):
+            return "Arbitrum" if chain_id == 42161 else None
+
+        def _chain_matches(self, chain, expected):
+            return chain == expected
+
+        def fetch_all_pools(self, force=False):
+            return [
+                {"pool": "aave-usdc", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USDC", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "aave-usdt", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USDT", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "aave-weth", "project": "aave-v3", "chain": "Arbitrum", "symbol": "WETH", "tvlUsd": 10_000_000, "apy": 4},
+            ]
+
+    def test_keeps_each_verified_asset_and_rejects_unmapped_assets(self):
+        markets = MarketCatalog(collector=self.Collector()).build_live_markets()
+        self.assertEqual({market["asset"] for market in markets}, {"USDC", "USDT"})
+        self.assertEqual({market["execution"]["position_symbol"] for market in markets}, {"aUSDC", "aUSDT"})
 
 
 if __name__ == "__main__":
