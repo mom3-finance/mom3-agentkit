@@ -25,6 +25,7 @@ class ExecutionMarket:
 # Do not add a symbol here until its protocol reserve/mint has been verified.
 EXECUTION_DEPLOYMENTS: dict[tuple[str, int, str], dict] = {
     ("kamino-lend", 101, "USDC"): {"chain": "Solana", "symbol": "USDC", "contract": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF", "asset_address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "asset_decimals": 6, "execution_type": "kamino-lend", "position_symbol": "kUSDC"},
+    ("kamino-lend", 101, "SOL"): {"chain": "Solana", "symbol": "SOL", "contract": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF", "asset_address": "So11111111111111111111111111111111111111112", "asset_decimals": 9, "execution_type": "kamino-lend", "position_symbol": "kSOL"},
     ("aave-v3", 42161, "USDC"): {"chain": "Arbitrum", "symbol": "USDC", "contract": "0x794a61358D6845594F94dc1DB02A252b5b4814aD", "asset_address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "asset_decimals": 6, "execution_type": "aave-v3", "position_symbol": "aUSDC"},
     ("aave-v3", 42161, "USDT"): {"chain": "Arbitrum", "symbol": "USDT", "contract": "0x794a61358D6845594F94dc1DB02A252b5b4814aD", "asset_address": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", "asset_decimals": 6, "execution_type": "aave-v3", "position_symbol": "aUSDT"},
     ("aave-v3", 8453, "USDC"): {"chain": "Base", "symbol": "USDC", "contract": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "asset_decimals": 6, "execution_type": "aave-v3", "position_symbol": "aUSDC"},

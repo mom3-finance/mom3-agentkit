@@ -91,13 +91,14 @@ class CatalogExecutionAssetTests(unittest.TestCase):
             return [
                 {"pool": "aave-usdc", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USDC", "tvlUsd": 10_000_000, "apy": 4},
                 {"pool": "aave-usdt", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USD₮0", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "kamino-sol", "project": "kamino-lend", "chain": "Solana", "symbol": "SOL", "tvlUsd": 10_000_000, "apy": 4},
                 {"pool": "aave-weth", "project": "aave-v3", "chain": "Arbitrum", "symbol": "WETH", "tvlUsd": 10_000_000, "apy": 4},
             ]
 
     def test_keeps_each_verified_asset_and_rejects_unmapped_assets(self):
         markets = MarketCatalog(collector=self.Collector()).build_live_markets()
-        self.assertEqual({market["asset"] for market in markets}, {"USDC", "USDT"})
-        self.assertEqual({market["execution"]["position_symbol"] for market in markets}, {"aUSDC", "aUSDT"})
+        self.assertEqual({market["asset"] for market in markets}, {"SOL", "USDC", "USDT"})
+        self.assertEqual({market["execution"]["position_symbol"] for market in markets}, {"aUSDC", "aUSDT", "kSOL"})
 
 
 if __name__ == "__main__":
