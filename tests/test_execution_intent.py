@@ -79,10 +79,10 @@ class ExecutionIntentTests(unittest.TestCase):
 class CatalogExecutionAssetTests(unittest.TestCase):
     class Collector:
         def supported_chain_ids(self):
-            return [42161]
+            return [101, 42161]
 
         def chain_name(self, chain_id):
-            return "Arbitrum" if chain_id == 42161 else None
+            return {101: "Solana", 42161: "Arbitrum"}.get(chain_id)
 
         def _chain_matches(self, chain, expected):
             return chain == expected
