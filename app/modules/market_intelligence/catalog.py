@@ -13,6 +13,7 @@ from .policy import (
     PROTOCOL_BASE_RISK,
     PROTOCOL_LABELS,
     execution_market_for,
+    is_discovery_project,
 )
 
 
@@ -31,8 +32,11 @@ def _boolean(value) -> bool:
 
 
 class MarketCatalog:
-    MAX_PERSISTED_MARKETS = 100
-    FOCUS_CHAIN_IDS = {101, 8453, 42161}
+    # The API paginates the catalog. Keep the complete supported-protocol
+    # universe here so an older version or a non-USDC asset is not silently
+    # dropped just because it ranks below the first page.
+    MAX_PERSISTED_MARKETS = 1000
+    FOCUS_CHAIN_IDS = {1, 56, 101, 196, 8453, 42161}
 
     """Builds a live catalog from all DefiLlama pools on supported chains."""
 
@@ -154,7 +158,7 @@ class MarketCatalog:
 
     @classmethod
     def _rank_and_dedupe(cls, markets: list[dict]) -> list[dict]:
-        """Keep only executable markets with unique pools and supplied assets."""
+        """Keep supported protocol pools, ranking executable markets ahead of watch-only ones."""
         ranked = sorted(
             markets,
             key=lambda item: (
@@ -167,12 +171,16 @@ class MarketCatalog:
         seen_contracts: set[str] = set()
         result: list[dict] = []
         for market in ranked:
-            if not bool((market.get("execution") or {}).get("enabled")):
-                continue
             pool_id = str(market.get("pool_id") or market.get("market_id") or "").strip().lower()
             if not pool_id or pool_id in seen_pools:
                 continue
             execution = market.get("execution") or {}
+            if not bool(execution.get("enabled")):
+                seen_pools.add(pool_id)
+                result.append(market)
+                if len(result) >= cls.MAX_PERSISTED_MARKETS:
+                    break
+                continue
             contract = str(execution.get("contract") or "").strip().lower()
             asset = str(execution.get("asset_address") or market.get("asset") or "").strip().lower()
             contract_key = f"{market.get('chain_id')}:{contract}:{asset}" if contract else ""
@@ -310,13 +318,13 @@ class MarketCatalog:
             return None
         if chain_id not in self.FOCUS_CHAIN_IDS:
             return None
+        if not is_discovery_project(project):
+            return None
         if tvl < settings.minimum_tvl_usd or apy < 0 or apy > settings.maximum_apy:
             return None
 
         market_id = str(pool.get("pool") or f"{project}:{chain_id}:{symbol}")
         execution = execution_market_for(market_id, project, symbol, chain_id)
-        if not execution:
-            return None
         reward_apy = _number(pool.get("apyReward"))
         base_risk = PROTOCOL_BASE_RISK.get(project, 5.0)
         liquidity_penalty = 0.0 if tvl >= 25_000_000 else 0.6 if tvl >= 5_000_000 else 1.2
@@ -331,8 +339,8 @@ class MarketCatalog:
             "pool_id": str(pool.get("pool") or ""),
             "protocol": PROTOCOL_LABELS.get(project, project.replace("-", " ").title()),
             "project": project,
-            "symbol": execution.symbol,
-            "asset": execution.symbol,
+            "symbol": execution.symbol if execution else symbol,
+            "asset": execution.symbol if execution else symbol.split("-")[0].split("/")[0].strip() or symbol,
             "chain": self.collector.chain_name(chain_id) or str(chain_id),
             "chain_id": chain_id,
             "ua_supported": chain_id in self.collector.supported_chain_ids(),
@@ -353,15 +361,15 @@ class MarketCatalog:
                 "probability": _number(prediction.get("predictedProbability")),
             },
             "execution": {
-                "enabled": True,
-                "actions": ["supply", "withdraw"],
-                "type": execution.execution_type,
+                "enabled": execution is not None,
+                "actions": ["supply", "withdraw"] if execution else [],
+                "type": execution.execution_type if execution else None,
                 "requires_user_confirmation": True,
-                "uses_eip7702": chain_id != 101,
-                "contract": execution.contract,
-                "asset_address": execution.asset_address,
-                "asset_decimals": execution.asset_decimals,
-                "position_symbol": execution.position_symbol,
+                "uses_eip7702": bool(execution) and chain_id != 101,
+                "contract": execution.contract if execution else None,
+                "asset_address": execution.asset_address if execution else None,
+                "asset_decimals": execution.asset_decimals if execution else None,
+                "position_symbol": execution.position_symbol if execution else None,
             },
             "source": "agentkit-defillama" if not settings.market_data_url else "postgresql",
             "source_url": settings.market_data_url or "https://yields.llama.fi/pools",

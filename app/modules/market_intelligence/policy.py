@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 
 
@@ -33,13 +34,37 @@ EXECUTION_DEPLOYMENTS: dict[tuple[str, int, str], dict] = {
     ("compound-v3", 8453, "USDC"): {"chain": "Base", "symbol": "USDC", "contract": "0xb125E6687d4313864e53df431d5425969c15Eb2F", "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "asset_decimals": 6, "execution_type": "compound-v3", "position_symbol": "cUSDCv3"},
 }
 
-DISCOVERY_PROJECTS = {"aave-v3", "compound-v3", "morpho-blue"}
+DISCOVERY_PROJECTS = {"morpho-blue", "kamino-lend", "kamino-liquidity"}
 PROTOCOL_LABELS = {
+    "aave-v2": "Aave V2",
     "aave-v3": "Aave V3",
+    "aave-v4": "Aave V4",
+    "compound-v2": "Compound V2",
     "compound-v3": "Compound V3",
     "morpho-blue": "Morpho",
+    "kamino-lend": "Kamino Lend",
+    "kamino-liquidity": "Kamino Liquidity",
 }
-PROTOCOL_BASE_RISK = {"aave-v3": 2.8, "compound-v3": 3.6, "morpho-blue": 4.4}
+PROTOCOL_BASE_RISK = {
+    "aave-v2": 3.4,
+    "aave-v3": 2.8,
+    "aave-v4": 3.0,
+    "compound-v2": 4.2,
+    "compound-v3": 3.6,
+    "morpho-blue": 4.4,
+    "kamino-lend": 4.0,
+    "kamino-liquidity": 5.8,
+}
+
+
+def is_discovery_project(project: str) -> bool:
+    """Allow supported protocol families without pretending every pool is executable."""
+    normalized = str(project or "").strip().lower()
+    return (
+        normalized in DISCOVERY_PROJECTS
+        or bool(re.fullmatch(r"aave-v\d+", normalized))
+        or bool(re.fullmatch(r"compound-v\d+", normalized))
+    )
 
 
 def canonical_asset_symbol(symbol: str) -> str:

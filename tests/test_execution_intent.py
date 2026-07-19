@@ -79,10 +79,10 @@ class ExecutionIntentTests(unittest.TestCase):
 class CatalogExecutionAssetTests(unittest.TestCase):
     class Collector:
         def supported_chain_ids(self):
-            return [101, 42161]
+            return [1, 101, 42161]
 
         def chain_name(self, chain_id):
-            return {101: "Solana", 42161: "Arbitrum"}.get(chain_id)
+            return {1: "Ethereum", 101: "Solana", 42161: "Arbitrum"}.get(chain_id)
 
         def _chain_matches(self, chain, expected):
             return chain == expected
@@ -93,12 +93,20 @@ class CatalogExecutionAssetTests(unittest.TestCase):
                 {"pool": "aave-usdt", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USD₮0", "tvlUsd": 10_000_000, "apy": 4},
                 {"pool": "kamino-sol", "project": "kamino-lend", "chain": "Solana", "symbol": "SOL", "tvlUsd": 10_000_000, "apy": 4},
                 {"pool": "aave-weth", "project": "aave-v3", "chain": "Arbitrum", "symbol": "WETH", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "aave-v4-usdt", "project": "aave-v4", "chain": "Ethereum", "symbol": "USDT", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "compound-v2-dai", "project": "compound-v2", "chain": "Ethereum", "symbol": "DAI", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "kamino-liquidity-sol", "project": "kamino-liquidity", "chain": "Solana", "symbol": "SOL-USDC", "tvlUsd": 10_000_000, "apy": 4},
             ]
 
-    def test_keeps_each_verified_asset_and_rejects_unmapped_assets(self):
+    def test_keeps_supported_protocol_versions_and_marks_unmapped_assets_watch_only(self):
         markets = MarketCatalog(collector=self.Collector()).build_live_markets()
-        self.assertEqual({market["asset"] for market in markets}, {"SOL", "USDC", "USDT"})
-        self.assertEqual({market["execution"]["position_symbol"] for market in markets}, {"aUSDC", "aUSDT", "kSOL"})
+        self.assertEqual({market["asset"] for market in markets}, {"DAI", "SOL", "USDC", "USDT", "WETH"})
+        self.assertEqual(
+            {market["execution"]["position_symbol"] for market in markets if market["execution"]["enabled"]},
+            {"aUSDC", "aUSDT", "kSOL"},
+        )
+        watch_only_projects = {market["project"] for market in markets if not market["execution"]["enabled"]}
+        self.assertTrue({"aave-v4", "compound-v2", "kamino-liquidity"}.issubset(watch_only_projects))
 
 
 if __name__ == "__main__":
