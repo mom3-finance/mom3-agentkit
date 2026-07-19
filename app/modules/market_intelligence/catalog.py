@@ -32,10 +32,9 @@ def _boolean(value) -> bool:
 
 
 class MarketCatalog:
-    # The API paginates the catalog. Keep the complete supported-protocol
-    # universe here so an older version or a non-USDC asset is not silently
-    # dropped just because it ranks below the first page.
-    MAX_PERSISTED_MARKETS = 1000
+    # Keep the catalog compact while giving verified executable pools priority.
+    # Remaining slots are the highest-ranked discovery/watch-only markets.
+    MAX_PERSISTED_MARKETS = 100
     FOCUS_CHAIN_IDS = {1, 56, 101, 196, 8453, 42161}
 
     """Builds a live catalog from all DefiLlama pools on supported chains."""
