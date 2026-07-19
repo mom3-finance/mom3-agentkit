@@ -32,8 +32,7 @@ def _boolean(value) -> bool:
 
 
 class MarketCatalog:
-    # Keep the catalog compact while giving verified executable pools priority.
-    # Remaining slots are the highest-ranked discovery/watch-only markets.
+    # Keep only markets with a verified execution adapter in the canonical catalog.
     MAX_PERSISTED_MARKETS = 100
     FOCUS_CHAIN_IDS = {1, 56, 101, 196, 8453, 42161}
 
@@ -89,7 +88,8 @@ class MarketCatalog:
                 market = self._backend_row_to_market(pool) if using_backend_catalog else self._normalize(pool, cid)
                 if not market or market["market_id"] in seen:
                     continue
-                if execution_only and not market["execution"]["enabled"]:
+                # AgentKit is the source of truth for actionable markets.
+                if not market["execution"]["enabled"]:
                     continue
                 seen.add(market["market_id"])
                 markets.append(market)
@@ -148,7 +148,7 @@ class MarketCatalog:
                 if not self.collector._chain_matches(str(pool.get("chain") or ""), chain_name):
                     continue
                 market = self._normalize(pool, chain_id)
-                if market and market["market_id"] not in seen:
+                if market and market["execution"]["enabled"] and market["market_id"] not in seen:
                     market["source"] = "agentkit-defillama"
                     market["source_url"] = "https://yields.llama.fi/pools"
                     seen.add(market["market_id"])
@@ -157,7 +157,7 @@ class MarketCatalog:
 
     @classmethod
     def _rank_and_dedupe(cls, markets: list[dict]) -> list[dict]:
-        """Keep supported protocol pools, ranking executable markets ahead of watch-only ones."""
+        """Keep only supported, executable protocol pools."""
         ranked = sorted(
             markets,
             key=lambda item: (
@@ -175,10 +175,6 @@ class MarketCatalog:
                 continue
             execution = market.get("execution") or {}
             if not bool(execution.get("enabled")):
-                seen_pools.add(pool_id)
-                result.append(market)
-                if len(result) >= cls.MAX_PERSISTED_MARKETS:
-                    break
                 continue
             contract = str(execution.get("contract") or "").strip().lower()
             asset = str(execution.get("asset_address") or market.get("asset") or "").strip().lower()
