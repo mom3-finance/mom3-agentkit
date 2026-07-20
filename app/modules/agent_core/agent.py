@@ -54,8 +54,11 @@ class Mom3Agent:
         }
 
     def top_yields(self, limit: int = 10, chain_id: int | None = None) -> dict:
-        """Rank the complete canonical catalog before returning the top yields."""
-        markets = self.catalog.list_markets(chain_id)
+        """Rank executable canonical markets before returning the top yields."""
+        # Explore only renders actionable markets. Rank the same set here so
+        # discovery-only rows cannot consume the Top 10 slots and disappear
+        # after the frontend execution guard is applied.
+        markets = self.catalog.list_markets(chain_id, execution_only=True)
 
         def rank_key(item: dict) -> tuple[float, float, float, float]:
             return (
@@ -89,7 +92,7 @@ class Mom3Agent:
             "chain_id": chain_id,
             "analysis": {
                 "engine": "mom3 AgentKit",
-                "scope": "all canonical Particle-compatible markets",
+                "scope": "all executable canonical Particle-compatible markets",
                 "market_count": len(markets),
                 "ranking": "opportunity_score desc, APY desc, TVL desc, risk asc",
             },

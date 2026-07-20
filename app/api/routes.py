@@ -79,8 +79,8 @@ def health():
         "service": "mom3 Agentkit",
         "version": "3.0.0",
         "supported_chains": agent.collector.supported_chain_ids(),
-        "execution_protocols": ["aave-v3", "compound-v3", "morpho-blue"],
-        "execution_asset": "USDC",
+        "execution_protocols": ["aave-v3", "compound-v3", "kamino-lend"],
+        "execution_assets": "verified per market",
         "llm_available": agent.llm.available,
         "llm_model": agent.llm.model,
     }

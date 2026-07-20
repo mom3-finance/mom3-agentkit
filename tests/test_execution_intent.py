@@ -1,6 +1,7 @@
 import unittest
 
 from app.modules.agent_core.execution import ExecutionIntentError, ExecutionIntentService
+from app.modules.market_intelligence.catalog import MarketCatalog
 
 
 MARKET = {
@@ -73,6 +74,39 @@ class ExecutionIntentTests(unittest.TestCase):
     def test_rejects_invalid_address(self):
         with self.assertRaises(ExecutionIntentError):
             self.service.create_intent(MARKET["market_id"], "supply", "1", "not-an-address")
+
+
+class CatalogExecutionAssetTests(unittest.TestCase):
+    class Collector:
+        def supported_chain_ids(self):
+            return [1, 101, 42161]
+
+        def chain_name(self, chain_id):
+            return {1: "Ethereum", 101: "Solana", 42161: "Arbitrum"}.get(chain_id)
+
+        def _chain_matches(self, chain, expected):
+            return chain == expected
+
+        def fetch_all_pools(self, force=False):
+            return [
+                {"pool": "aave-usdc", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USDC", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "aave-usdt", "project": "aave-v3", "chain": "Arbitrum", "symbol": "USD₮0", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "kamino-sol", "project": "kamino-lend", "chain": "Solana", "symbol": "SOL", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "aave-weth", "project": "aave-v3", "chain": "Arbitrum", "symbol": "WETH", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "aave-v4-usdt", "project": "aave-v4", "chain": "Ethereum", "symbol": "USDT", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "compound-v2-dai", "project": "compound-v2", "chain": "Ethereum", "symbol": "DAI", "tvlUsd": 10_000_000, "apy": 4},
+                {"pool": "kamino-liquidity-sol", "project": "kamino-liquidity", "chain": "Solana", "symbol": "SOL-USDC", "tvlUsd": 10_000_000, "apy": 4},
+            ]
+
+    def test_keeps_supported_protocol_versions_and_marks_unmapped_assets_watch_only(self):
+        markets = MarketCatalog(collector=self.Collector()).build_live_markets()
+        self.assertEqual({market["asset"] for market in markets}, {"DAI", "SOL", "USDC", "USDT", "WETH"})
+        self.assertEqual(
+            {market["execution"]["position_symbol"] for market in markets if market["execution"]["enabled"]},
+            {"aUSDC", "aUSDT", "kSOL"},
+        )
+        watch_only_projects = {market["project"] for market in markets if not market["execution"]["enabled"]}
+        self.assertTrue({"aave-v4", "compound-v2", "kamino-liquidity"}.issubset(watch_only_projects))
 
 
 if __name__ == "__main__":

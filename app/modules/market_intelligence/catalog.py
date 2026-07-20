@@ -13,7 +13,7 @@ from .policy import (
     PROTOCOL_BASE_RISK,
     PROTOCOL_LABELS,
     execution_market_for,
-    is_stablecoin_symbol,
+    is_discovery_project,
 )
 
 
@@ -32,8 +32,9 @@ def _boolean(value) -> bool:
 
 
 class MarketCatalog:
+    # Keep only markets with a verified execution adapter in the canonical catalog.
     MAX_PERSISTED_MARKETS = 100
-    FOCUS_CHAIN_IDS = {101, 8453, 42161}
+    FOCUS_CHAIN_IDS = {1, 56, 101, 196, 8453, 42161}
 
     """Builds a live catalog from all DefiLlama pools on supported chains."""
 
@@ -87,7 +88,8 @@ class MarketCatalog:
                 market = self._backend_row_to_market(pool) if using_backend_catalog else self._normalize(pool, cid)
                 if not market or market["market_id"] in seen:
                     continue
-                if execution_only and not market["execution"]["enabled"]:
+                # AgentKit is the source of truth for actionable markets.
+                if not market["execution"]["enabled"]:
                     continue
                 seen.add(market["market_id"])
                 markets.append(market)
@@ -146,7 +148,7 @@ class MarketCatalog:
                 if not self.collector._chain_matches(str(pool.get("chain") or ""), chain_name):
                     continue
                 market = self._normalize(pool, chain_id)
-                if market and market["market_id"] not in seen:
+                if market and market["execution"]["enabled"] and market["market_id"] not in seen:
                     market["source"] = "agentkit-defillama"
                     market["source_url"] = "https://yields.llama.fi/pools"
                     seen.add(market["market_id"])
@@ -155,7 +157,7 @@ class MarketCatalog:
 
     @classmethod
     def _rank_and_dedupe(cls, markets: list[dict]) -> list[dict]:
-        """Keep only executable markets with unique pools/contracts."""
+        """Keep only supported, executable protocol pools."""
         ranked = sorted(
             markets,
             key=lambda item: (
@@ -168,14 +170,15 @@ class MarketCatalog:
         seen_contracts: set[str] = set()
         result: list[dict] = []
         for market in ranked:
-            if not bool((market.get("execution") or {}).get("enabled")):
-                continue
             pool_id = str(market.get("pool_id") or market.get("market_id") or "").strip().lower()
             if not pool_id or pool_id in seen_pools:
                 continue
             execution = market.get("execution") or {}
+            if not bool(execution.get("enabled")):
+                continue
             contract = str(execution.get("contract") or "").strip().lower()
-            contract_key = f"{market.get('chain_id')}:{contract}" if contract else ""
+            asset = str(execution.get("asset_address") or market.get("asset") or "").strip().lower()
+            contract_key = f"{market.get('chain_id')}:{contract}:{asset}" if contract else ""
             if contract_key and contract_key in seen_contracts:
                 continue
             seen_pools.add(pool_id)
@@ -190,15 +193,23 @@ class MarketCatalog:
         if not settings.market_ingest_url or not settings.market_ingest_token:
             raise RuntimeError("MARKET_INGEST_URL and MARKET_INGEST_TOKEN are required for market sync.")
         markets = self.build_live_markets()
-        response = requests.post(
-            settings.market_ingest_url,
-            json={"markets": markets},
-            headers={"Authorization": f"Bearer {settings.market_ingest_token}", "Content-Type": "application/json"},
-            timeout=60,
-        )
-        response.raise_for_status()
-        self._backend_cache.clear()
-        return response.json()
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    settings.market_ingest_url,
+                    json={"markets": markets},
+                    headers={"Authorization": f"Bearer {settings.market_ingest_token}", "Content-Type": "application/json"},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                self._backend_cache.clear()
+                return response.json()
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+        raise RuntimeError(f"Market ingest failed after 3 attempts: {last_error}") from last_error
 
     @staticmethod
     def _backend_row_to_pool(row: dict) -> dict:
@@ -300,7 +311,9 @@ class MarketCatalog:
 
         if not project or not symbol or not pool.get("pool"):
             return None
-        if chain_id not in self.FOCUS_CHAIN_IDS or not is_stablecoin_symbol(symbol):
+        if chain_id not in self.FOCUS_CHAIN_IDS:
+            return None
+        if not is_discovery_project(project):
             return None
         if tvl < settings.minimum_tvl_usd or apy < 0 or apy > settings.maximum_apy:
             return None
@@ -321,8 +334,8 @@ class MarketCatalog:
             "pool_id": str(pool.get("pool") or ""),
             "protocol": PROTOCOL_LABELS.get(project, project.replace("-", " ").title()),
             "project": project,
-            "symbol": symbol,
-            "asset": symbol.split("-")[0].split("/")[0].strip() or symbol,
+            "symbol": execution.symbol if execution else symbol,
+            "asset": execution.symbol if execution else symbol.split("-")[0].split("/")[0].strip() or symbol,
             "chain": self.collector.chain_name(chain_id) or str(chain_id),
             "chain_id": chain_id,
             "ua_supported": chain_id in self.collector.supported_chain_ids(),
@@ -347,7 +360,7 @@ class MarketCatalog:
                 "actions": ["supply", "withdraw"] if execution else [],
                 "type": execution.execution_type if execution else None,
                 "requires_user_confirmation": True,
-                "uses_eip7702": True,
+                "uses_eip7702": bool(execution) and chain_id != 101,
                 "contract": execution.contract if execution else None,
                 "asset_address": execution.asset_address if execution else None,
                 "asset_decimals": execution.asset_decimals if execution else None,
