@@ -106,3 +106,11 @@ Invoke-RestMethod http://localhost:8001/api/ai/strategy -Method Post -ContentTyp
 - APY is variable and no response represents guaranteed return or financial advice.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md), [MVP_YIELD_RESEARCH.md](MVP_YIELD_RESEARCH.md), and [AI_FEATURES_DOCUMENTATION.md](AI_FEATURES_DOCUMENTATION.md).
+
+## Production operations
+
+Deployment, readiness checks, smoke tests, observability, rollback, and
+security acceptance criteria are maintained in
+[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). The machine-readable
+contract is available at `/openapi.json` when the service is running; the human
+endpoint guide is [docs/endpoints.md](docs/endpoints.md).
